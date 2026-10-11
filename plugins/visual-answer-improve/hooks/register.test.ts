@@ -8,6 +8,21 @@ const message = (text: string) => ({
   props: { text, isFirstOfReply: true },
 } as const)
 
+type Found = { props: Record<string, unknown> }
+type Mounted = {
+  find: (q: { type?: string; text?: RegExp }) => Promise<Found | undefined>
+  findAll: (q: { type?: string }) => Promise<Found[]>
+}
+
+// The tab's fill: an SVG path's fill on the desktop, the label's background on the terminal.
+const tabFill = async (ui: Mounted, surface: (typeof SURFACES)[number], label: string): Promise<unknown> => {
+  const text = new RegExp(`^${label}$`)
+  if (surface === 'terminal') return (await ui.find({ type: 'Text', text }))?.props.backgroundColor
+  // An Svg shows no text to match, so it is found by its alt.
+  const svg = (await ui.findAll({ type: 'Svg' })).find(el => text.test(String(el.props.alt)))
+  return /<path [^>]*fill="([^"]+)"/.exec(String(svg?.props.source ?? ''))?.[1]
+}
+
 const REPLY = [
   'Мод готов.',
   '',
@@ -30,10 +45,8 @@ test('marked sections get a tab and a frame of their color', async ($, on) => {
   on('ui.render', { component: 'AssistantMessage' }, () => ({ type: 'engine', ref: 0 }))
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...message(REPLY), surface })
-    for (const [label, color] of [['Сделано', '#3FB950'], ['Не сделано', '#E06C75'], ['Требуется решение', '#F5A623']]) {
-      const tab = await ui.find({ type: 'Text', text: new RegExp(`^${label}$`) })
-      expect(tab?.props.backgroundColor).toBe(color)
-      expect(tab?.props.color).toBe('#000000')
+    for (const [label, color] of [['Сделано', '#3FB950'], ['Не сделано', '#E06C75'], ['Требуется решение', '#F5A623']] as const) {
+      expect(await tabFill(ui, surface, label)).toBe(color)
     }
     expect(await ui.find({ type: 'Markdown', text: /^Мод готов\.$/ })).toBeDefined()
     expect(await ui.find({ type: 'Markdown', text: /^1\. Цвет\?$/ })).toBeDefined()
@@ -56,7 +69,7 @@ test('replies without marked sections, or with an empty one, are drawn by the en
 test('an English heading and a custom color', { options: { doneColor: 'green' } }, async ($, on) => {
   on('ui.render', { component: 'AssistantMessage' }, () => ({ type: 'engine', ref: 0 }))
   const ui = await $.ui.mount({ ...message('**Done:**\n- frames\n\n## Next\nmore'), surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /^Done$/ }))?.props.backgroundColor).toBe('green')
+  expect(await tabFill(ui, 'desktop', 'Done')).toBe('green')
   expect(await ui.find({ type: 'Markdown', text: /^## Next\nmore$/ })).toBeDefined()
 })
 
@@ -66,6 +79,7 @@ test('CRLF line endings keep fences and a cleared color keeps the label readable
   const ui = await $.ui.mount({ ...message(text), surface: 'terminal' })
   expect(await ui.find({ type: 'Markdown', text: /^```md\r\n### Требуется решение\r\n```$/ })).toBeDefined()
   const tab = await ui.find({ type: 'Text', text: /^Требуется решение$/ })
+  expect(tab).toBeDefined()
   expect(tab?.props.color).toBeUndefined()
   expect(tab?.props.backgroundColor).toBeUndefined()
 })

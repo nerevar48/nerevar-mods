@@ -98,6 +98,28 @@ function split(markdown: string): Segment[] {
 }
 
 // ---------------------------------------------------------------------------
+// The tab on surfaces that draw SVG: a browser-like tab with rounded top
+// corners, set in past the frame's rounded corner and sitting on its top edge.
+// The label's width is estimated, so the tab is a little wider than the text.
+
+const TAB = { height: 24, radius: 6, inset: 12, padding: 12, charWidth: 8, fontSize: 13 }
+
+const escapeXml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+function tabSvg(label: string, fill: string): { source: string; width: number; height: number } {
+  const { height: h, radius: r, inset: x, padding, charWidth, fontSize } = TAB
+  const w = Math.ceil(label.length * charWidth) + 2 * padding
+  const path = `M${x} ${h}V${r}Q${x} 0 ${x + r} 0H${x + w - r}Q${x + w} 0 ${x + w} ${r}V${h}Z`
+  const source =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${x + w}" height="${h}" viewBox="0 0 ${x + w} ${h}">` +
+    `<path d="${path}" fill="${escapeXml(fill)}"/>` +
+    `<text x="${x + w / 2}" y="${h / 2}" dominant-baseline="central" text-anchor="middle" fill="${TAB_TEXT}" ` +
+    `font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="${fontSize}" font-weight="600">` +
+    `${escapeXml(label)}</text></svg>`
+  return { source, width: x + w, height: h }
+}
+
+// ---------------------------------------------------------------------------
 
 export const register: Register = (on, options) => {
   const color = (kind: SectionKind) => String(options[SECTIONS[kind].option] ?? '').trim() || undefined
@@ -112,6 +134,8 @@ export const register: Register = (on, options) => {
     if (!segments.some(s => s.kind !== 'text')) return next(e)
 
     const { Box, Text, Markdown } = $.ui.resolve(e)
+    // Every surface but the terminal draws SVG.
+    const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
     return (
       <Box flexDirection="column">
         {segments.map(s => {
@@ -119,11 +143,15 @@ export const register: Register = (on, options) => {
           const c = color(s.kind)
           return (
             <Box flexDirection="column" marginTop={1}>
-              <Box alignSelf="flex-start" paddingX={1} backgroundColor={c}>
-                <Text color={c && TAB_TEXT} backgroundColor={c} bold>
-                  {s.label}
-                </Text>
-              </Box>
+              {Svg && c ? (
+                <Svg alt={s.label} {...tabSvg(s.label, c)} />
+              ) : (
+                <Box alignSelf="flex-start" marginLeft={2} paddingX={1} backgroundColor={c}>
+                  <Text color={c && TAB_TEXT} backgroundColor={c} bold>
+                    {s.label}
+                  </Text>
+                </Box>
+              )}
               <Box flexDirection="column" borderStyle="round" borderColor={c} paddingX={1}>
                 <Markdown text={s.text} />
               </Box>
