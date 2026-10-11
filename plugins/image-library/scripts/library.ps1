@@ -1,6 +1,6 @@
 # Сканер и генератор миниатюр для мода image-library.
 #   -Mode scan   : JSON-массив найденных изображений из корней, переданных в stdin
-#                  ([{ source, session?, path }]), в stdout.
+#                  ([{ source, session, path, skipBuildDirs }]), в stdout.
 #   -Mode thumbs : JSON-массив путей в stdin; для каждого создаёт JPEG-миниатюру
 #                  в -CacheDir (если её ещё нет) и печатает { path: thumbPath|null }.
 param(
@@ -11,17 +11,20 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
+# Node пишет и читает UTF-8; без этого кириллица в путях декодируется как OEM-кодировка.
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $inputText = [Console]::In.ReadToEnd()
 $request = if ($inputText.Trim()) { ConvertFrom-Json $inputText } else { @() }
 
 $extensions = @('.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg')
-# Папки сборки, зависимостей и кэшей: в них картинки не создаются руками или агентом.
-$skipDirs = @('node_modules', '.git', '.hg', '.svn', 'Library', 'Temp', 'Obj', 'obj', 'Logs',
-  'bin', 'dist', 'build', 'Build', 'out', '.next', '.nuxt', '.venv', 'venv', '__pycache__',
-  '.gradle', '.idea', '.vs', 'types', 'packages', 'Packages', 'PackageCache')
+# Папки сборки, зависимостей и кэшей проекта: в них картинки не создаются руками или агентом.
+# -contains сравнивает без учёта регистра.
+$skipDirs = @('node_modules', '.git', '.hg', '.svn', 'Library', 'Temp', 'Obj', 'Logs', 'bin',
+  'dist', 'build', '.next', '.nuxt', '.venv', 'venv', '__pycache__', '.gradle', '.idea', '.vs',
+  'Packages', 'PackageCache')
 
-function Find-Images([string] $root) {
+function Find-Images([string] $root, [bool] $skipBuildDirs) {
   $stack = [Collections.Generic.Stack[string]]::new()
   $stack.Push($root)
   while ($stack.Count -gt 0) {
@@ -31,7 +34,8 @@ function Find-Images([string] $root) {
       $name = [IO.Path]::GetFileName($entry)
       $attributes = [IO.File]::GetAttributes($entry)
       if ($attributes -band [IO.FileAttributes]::Directory) {
-        if (-not ($attributes -band [IO.FileAttributes]::ReparsePoint) -and $skipDirs -notcontains $name) {
+        $isSkipped = $skipBuildDirs -and $skipDirs -contains $name
+        if (-not ($attributes -band [IO.FileAttributes]::ReparsePoint) -and -not $isSkipped) {
           $stack.Push($entry)
         }
       } elseif ($extensions -contains [IO.Path]::GetExtension($name).ToLowerInvariant()) {
@@ -44,7 +48,7 @@ function Find-Images([string] $root) {
 if ($Mode -eq 'scan') {
   $found = foreach ($root in $request) {
     if (-not [IO.Directory]::Exists($root.path)) { continue }
-    foreach ($file in Find-Images $root.path) {
+    foreach ($file in Find-Images $root.path ([bool] $root.skipBuildDirs)) {
       $info = [IO.FileInfo]::new($file)
       [pscustomobject]@{
         path    = $info.FullName
@@ -68,6 +72,7 @@ $jpeg = [Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_
 $quality = [Drawing.Imaging.EncoderParameters]::new(1)
 $quality.Param[0] = [Drawing.Imaging.EncoderParameter]::new([Drawing.Imaging.Encoder]::Quality, [long]80)
 $result = [ordered]@{}
+try {
 
 foreach ($path in $request) {
   $result[$path] = $null
@@ -100,5 +105,5 @@ foreach ($path in $request) {
   }
 }
 
-$md5.Dispose()
+} finally { $md5.Dispose() }
 ConvertTo-Json -InputObject $result -Compress

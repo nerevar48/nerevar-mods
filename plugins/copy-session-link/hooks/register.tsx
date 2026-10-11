@@ -46,18 +46,19 @@ export const register: Register = on => {
     }
 
     const link = LINK_PREFIX + hostSessionId
-    const modes = e.props.modes.join(' & ')
-    const { Box, Button, Text } = $.ui.resolve(e)
+    // То, что рисуют хуки ниже (метки режимов, кнопки других модов), остаётся рядом.
+    const below = await next(e)
+    const { Box, Button } = $.ui.resolve(e)
 
     return (
-      <Box>
+      <Box flexDirection="row" alignItems="center" gap={1}>
         <Button
           key="copy-session-link"
           plain
           label="🔗 Ссылка"
           onPress={(press: UiPressArgument) => copyLink($, link, press.surface)}
         />
-        {modes ? <Text dimColor> {modes}</Text> : null}
+        {below}
       </Box>
     )
   })

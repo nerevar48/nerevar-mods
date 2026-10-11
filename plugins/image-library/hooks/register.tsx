@@ -8,7 +8,8 @@ const TITLE = 'Библиотека'
 const COMMAND = 'library'
 const PAGE = 24
 const THUMB_PX = 192
-// Исходник не больше этого (байт) вкладывается в Svg как есть, когда миниатюры нет.
+// Исходник не больше этого (байт) вкладывается в Svg как есть, когда миниатюры нет:
+// его base64 (×4/3) с обёрткой укладывается в 131072 символа source у Svg.
 const EMBED_LIMIT = 90_000
 const SCRIPT_TIMEOUT_MS = 120_000
 // Миниатюры делает System.Drawing: он читает эти форматы, а webp и svg нет.
@@ -31,7 +32,7 @@ const isOldestFirst = atom({ plugin: 'image-library', key: 'isOldestFirst' } as 
 const limit = atom({ plugin: 'image-library', key: 'limit' } as const, PAGE)
 const thumbs = atom({ plugin: 'image-library', key: 'thumbs' } as const, {})
 
-type Root = { source: Source; session: string | null; path: string }
+type Root = { source: Source; session: string | null; path: string; skipBuildDirs: boolean }
 type Settings = { includeCodex: boolean; scanLimit: number }
 
 function extensionOf(path: string): string {
@@ -58,7 +59,7 @@ async function runScript($: EngineInterface, args: string[], input: unknown): Pr
   const ran = await $.process.run(argv, { stdin: JSON.stringify(input), timeoutMs: SCRIPT_TIMEOUT_MS })
 
   if (ran.exitCode !== 0) {
-    throw new Error(ran.stderr.trim().split('\n')[0] || `library.ps1: код ${ran.exitCode}`)
+    throw new Error(ran.stderr.trim().slice(0, 400) || `library.ps1: код ${ran.exitCode}`)
   }
 
   return ran.stdout
@@ -66,7 +67,7 @@ async function runScript($: EngineInterface, args: string[], input: unknown): Pr
 
 async function rootsOf($: EngineInterface, settings: Settings): Promise<Root[]> {
   const cwd = await $.session.cwd()
-  const roots: Root[] = [{ source: 'project', session: null, path: cwd }]
+  const roots: Root[] = [{ source: 'project', session: null, path: cwd, skipBuildDirs: true }]
   const temp = (await $.env.get('TEMP')) ?? (await $.env.get('TMP'))
 
   if (temp) {
@@ -75,7 +76,7 @@ async function rootsOf($: EngineInterface, settings: Settings): Promise<Root[]> 
 
     for (const entry of entries) {
       if (entry.kind === 'dir') {
-        roots.push({ source: 'session', session: entry.name, path: join(sessionsDir, entry.name) })
+        roots.push({ source: 'session', session: entry.name, path: join(sessionsDir, entry.name), skipBuildDirs: false })
       }
     }
   }
@@ -83,7 +84,7 @@ async function rootsOf($: EngineInterface, settings: Settings): Promise<Root[]> 
   const home = await $.env.get('USERPROFILE')
 
   if (settings.includeCodex && home) {
-    roots.push({ source: 'codex', session: null, path: join(home, '.codex', 'generated_images') })
+    roots.push({ source: 'codex', session: null, path: join(home, '.codex', 'generated_images'), skipBuildDirs: false })
   }
 
   return roots
@@ -96,47 +97,55 @@ function matches(image: LibraryImage, current: Filter): boolean {
   return image.source === current
 }
 
+// Ключ миниатюры с mtime: перезаписанный файл получает новую.
+function thumbKey(image: LibraryImage): string {
+  return `${image.path}|${image.mtimeMs}`
+}
+
 function sortedFiltered(list: readonly LibraryImage[], current: Filter, oldestFirst: boolean): LibraryImage[] {
   const chosen = list.filter(image => matches(image, current))
   return oldestFirst ? chosen.reverse() : chosen
 }
 
-// Миниатюры видимой страницы: одна команда на все недостающие, повторно не запускается.
+// Миниатюры видимой страницы: одна команда на все недостающие. Запрос во время
+// работы ставит флаг, и цикл проходит ещё раз; проверка флага и сброс идут без await между ними.
 let thumbsRun: Promise<void> | undefined
 let isThumbsAgain = false
 
-async function ensureThumbs($: EngineInterface, cacheDir: string): Promise<void> {
-  if (thumbsRun) {
-    isThumbsAgain = true
-    return thumbsRun
-  }
+function ensureThumbs($: EngineInterface, cacheDir: string): Promise<void> {
+  isThumbsAgain = true
+  if (thumbsRun) return thumbsRun
 
   thumbsRun = (async () => {
-    do {
-      isThumbsAgain = false
-      const known = await read($, thumbs)
-      const shown = sortedFiltered(await read($, images), await read($, filter), await read($, isOldestFirst))
-      const missing = shown
-        .slice(0, await read($, limit))
-        .map(image => image.path)
-        .filter(path => !(path in known) && THUMBABLE.includes(extensionOf(path)))
+    try {
+      while (isThumbsAgain) {
+        isThumbsAgain = false
+        const known = await read($, thumbs)
+        const shown = sortedFiltered(await read($, images), await read($, filter), await read($, isOldestFirst))
+        const missing = shown
+          .slice(0, await read($, limit))
+          .filter(image => !(thumbKey(image) in known) && THUMBABLE.includes(extensionOf(image.path)))
 
-      if (missing.length > 0) {
-        const made = parseJson<Record<string, string | null>>(
-          await runScript($, ['-Mode', 'thumbs', '-CacheDir', cacheDir, '-Size', String(THUMB_PX)], missing),
-          {},
-        )
-        await update($, thumbs, current => ({ ...current, ...made }))
+        if (missing.length > 0) {
+          const args = ['-Mode', 'thumbs', '-CacheDir', cacheDir, '-Size', String(THUMB_PX)]
+          const made = parseJson<Record<string, string | null>>(await runScript($, args, missing.map(image => image.path)), {})
+          const byKey = Object.fromEntries(missing.map(image => [thumbKey(image), made[image.path] ?? null]))
+          await update($, thumbs, current => ({ ...current, ...byKey }))
+        }
       }
-    } while (isThumbsAgain)
-  })().finally(() => {
-    thumbsRun = undefined
-  })
+    } finally {
+      thumbsRun = undefined
+    }
+  })()
 
   return thumbsRun
 }
 
+// Номер последнего запущенного скана: результат более старого отбрасывается.
+let scanGeneration = 0
+
 async function scan($: EngineInterface, settings: Settings, cacheDir: string): Promise<void> {
+  const generation = ++scanGeneration
   await update($, status, () => 'scanning')
 
   try {
@@ -145,19 +154,29 @@ async function scan($: EngineInterface, settings: Settings, cacheDir: string): P
       await runScript($, ['-Mode', 'scan', '-Limit', String(settings.scanLimit)], roots),
       [],
     )
+    if (generation !== scanGeneration) return
+    const present = new Set(found.map(thumbKey))
     await update($, images, () => found)
+    await update($, thumbs, current => Object.fromEntries(Object.entries(current).filter(([key]) => present.has(key))))
     await update($, error, () => '')
     await update($, status, () => 'idle')
-    await ensureThumbs($, cacheDir)
   } catch (failure) {
-    await update($, error, () => failure instanceof Error ? failure.message : String(failure))
+    if (generation !== scanGeneration) return
+    await update($, error, () => (failure instanceof Error ? failure.message : String(failure)))
     await update($, status, () => 'error')
+    return
   }
+
+  await ensureThumbs($, cacheDir).catch(failure => $.ui.toast(`Миниатюры: ${String(failure)}`))
 }
 
-function openFile($: EngineInterface, path: string): void {
+async function openFile($: EngineInterface, path: string): Promise<void> {
+  if (!(await $.fs.exists(path))) {
+    $.ui.toast(`Файла уже нет: ${path}`)
+    return
+  }
   // explorer.exe открывает файл приложением по умолчанию; код выхода у него всегда 1.
-  void $.process.run(['explorer.exe', path], { timeoutMs: 10_000 }).catch(() => $.ui.toast(`Не удалось открыть ${path}`))
+  await $.process.run(['explorer.exe', path], { timeoutMs: 10_000 }).catch(() => $.ui.toast(`Не удалось открыть ${path}`))
 }
 
 function pad(value: number): string {
@@ -181,27 +200,29 @@ function sourceText(image: LibraryImage, currentSession: string): string {
 function svgOf(mime: string, base64: string, width: number, height: number): string {
   const href = `data:${mime};base64,${base64}`
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+    `<svg xmlns="http://www.w3.org/2000/svg" ` +
     `width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-    `<image href="${href}" xlink:href="${href}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"/></svg>`
+    `<image href="${href}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"/></svg>`
   )
 }
 
-// base64 файлов миниатюр и мелких исходников; сбрасывается, когда выходит за несколько страниц.
-const bytesCache = new Map<string, string | null>()
-const BYTES_CACHE_LIMIT = PAGE * 8
+// base64 прочитанных файлов (миниатюра ~10 КБ); самые давние вытесняются первыми.
+const bytesCache = new Map<string, string>()
+const BYTES_CACHE_LIMIT = 600
 
 async function base64Of($: EngineInterface, path: string, cacheKey = path): Promise<string | null> {
-  if (!bytesCache.has(cacheKey)) {
-    if (bytesCache.size >= BYTES_CACHE_LIMIT) bytesCache.clear()
-    const bytes = await $.fs.read(path, { as: 'bytes' }).then(
-      read => read.base64,
-      () => null,
-    )
-    bytesCache.set(cacheKey, bytes)
-  }
+  const cached = bytesCache.get(cacheKey)
+  if (cached !== undefined) return cached
 
-  return bytesCache.get(cacheKey) ?? null
+  const bytes = await $.fs.read(path, { as: 'bytes' }).then(
+    read => read.base64,
+    () => null,
+  )
+  if (bytes === null) return null
+  const oldest = bytesCache.keys().next()
+  if (bytesCache.size >= BYTES_CACHE_LIMIT && !oldest.done) bytesCache.delete(oldest.value)
+  bytesCache.set(cacheKey, bytes)
+  return bytes
 }
 
 // Что показать в плитке: миниатюра, либо сам файл, если он мал, либо ничего.
@@ -217,8 +238,7 @@ async function pictureOf(
 
   const mime = MIME[extensionOf(image.path)]
   if (!mime || image.size > EMBED_LIMIT) return null
-  // Ключ с mtime: перезаписанный файл читается заново.
-  const base64 = await base64Of($, image.path, `${image.path}|${image.mtimeMs}`)
+  const base64 = await base64Of($, image.path, thumbKey(image))
   return base64 ? { mime, base64 } : null
 }
 
@@ -246,8 +266,8 @@ async function openLibrary($: EngineInterface, settings: Settings, cacheDir: str
   await scan($, settings, cacheDir)
 }
 
-async function isOpen($: EngineInterface): Promise<boolean> {
-  return (await $.ui.panes()).some(pane => pane.id === PANE)
+async function isShown($: EngineInterface): Promise<boolean> {
+  return (await $.ui.panes()).some(pane => pane.id === PANE && pane.isShown && pane.isPlaced)
 }
 
 // Смена фильтра, сортировки или страницы, затем миниатюры для новой видимой страницы.
@@ -282,14 +302,14 @@ export const register: Register = (on, options) => {
     return { text: 'Библиотека открыта.' }
   })
 
-  // Новые картинки за ход: пересканировать, пока панель открыта.
+  // Новые картинки за ход: пересканировать, пока панель на экране.
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    if (await isOpen($)) void scan($, settings, cacheDir)
+    if (await isShown($)) void scan($, settings, cacheDir)
     return result
   })
 
-  // Кнопка в футере поля ввода, перед тем, что рисуют остальные (выбор модели, режимы).
+  // Кнопка в футере поля ввода; то, что рисуют хуки ниже (режимы, другие моды), идёт следом.
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const below = await next(e)
     const { Box, Button } = $.ui.resolve(e)
@@ -337,9 +357,10 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    const pictures = 'Svg' in ui ? await Promise.all(page.map(image => pictureOf($, image, known[thumbKey(image)]))) : []
     const tiles: RenderElement[] = []
 
-    for (const image of page) {
+    for (const [index, image] of page.entries()) {
       const caption = `${dateText(image.mtimeMs)} · ${sourceText(image, currentSession)}`
       const open = () => openFile($, image.path)
 
@@ -354,7 +375,7 @@ export const register: Register = (on, options) => {
       }
 
       const { Svg } = ui
-      const picture = await pictureOf($, image, known[image.path])
+      const picture = pictures[index]
       tiles.push(
         <Box key={`tile:${image.path}`} flexDirection="column" width={26}>
           {picture ? (

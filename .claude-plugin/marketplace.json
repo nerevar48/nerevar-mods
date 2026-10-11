@@ -28,7 +28,7 @@
       "name": "copy-session-link",
       "source": "./plugins/copy-session-link",
       "description": "Кнопка в футере поля ввода Claude Code Desktop, копирующая в буфер обмена ссылку на текущую сессию",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "category": "mod"
     },
     {
