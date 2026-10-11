@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Elements, EngineInterface, Register, RenderElement, RenderSurface } from 'claude-code'
+import type { Elements, EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { Filter, LibraryImage, Preview, Source } from '../types'
 
@@ -193,6 +193,9 @@ async function scan($: EngineInterface, settings: Settings, cacheDir: string): P
     if (generation !== scanGeneration) return
     const present = new Set(found.map(thumbKey))
     await update($, images, () => found)
+    // Открытый в просмотре файл исчез: вернуться к галерее.
+    const paths = new Set(found.map(image => image.path))
+    await update($, viewing, current => (current !== null && paths.has(current) ? current : null))
     // Список мог сократиться: номер страницы остаётся в его пределах.
     await update($, page, current => Math.min(current, pageCount(found.length) - 1))
     const isPresent = ([key]: [string, unknown]) => present.has(key)
@@ -219,24 +222,44 @@ async function openFile($: EngineInterface, path: string): Promise<void> {
   await $.process.run(['explorer.exe', path], { timeoutMs: 10_000 }).catch(() => $.ui.toast(`Не удалось открыть ${path}`))
 }
 
-async function copyPath($: EngineInterface, path: string, surface: RenderSurface): Promise<void> {
-  // Скрипт кладёт путь в буфер Windows; $.ui.copy на desktop в системный буфер не пишет.
-  const isCopied =
-    (await runScript($, ['-Mode', 'copy'], path).then(() => true, () => false)) ||
-    (await $.ui.copy({ text: path, surface }).then(copied => copied.isCopied, () => false))
+// Путь кладёт в буфер Windows скрипт: $.ui.copy на desktop в системный буфер не пишет.
+async function copyPath($: EngineInterface, path: string): Promise<void> {
+  const isCopied = await runScript($, ['-Mode', 'copy'], path).then(() => true, () => false)
   $.ui.toast(isCopied ? `Путь скопирован: ${path}` : `Не удалось скопировать: ${path}`)
 }
 
-async function ensurePreview($: EngineInterface, cacheDir: string, image: LibraryImage): Promise<void> {
-  const key = thumbKey(image)
-  if (key in (await read($, previews)) || !THUMBABLE.includes(extensionOf(image.path))) return
+// Подготовки просмотра, идущие сейчас: повторный запрос той же картинки ждёт ту же.
+const previewRuns = new Map<string, Promise<void>>()
 
-  const args = ['-Mode', 'preview', '-CacheDir', cacheDir, '-Size', String(PREVIEW_WIDTH), '-StripBytes', String(STRIP_BYTES)]
-  const made = await runScript($, args, image.path).then(
-    out => parseJson<Preview | null>(out, null),
-    () => null,
-  )
-  await update($, previews, current => ({ ...current, [key]: made }))
+async function hasStrips($: EngineInterface, preview: Preview): Promise<boolean> {
+  const present = await Promise.all(preview.strips.map(strip => $.fs.exists(strip.path).catch(() => false)))
+  return present.every(Boolean)
+}
+
+function ensurePreview($: EngineInterface, cacheDir: string, image: LibraryImage): Promise<void> {
+  const key = thumbKey(image)
+  const running = previewRuns.get(key)
+  if (running) return running
+
+  const run = (async () => {
+    if (!THUMBABLE.includes(extensionOf(image.path))) return
+    const known = (await read($, previews))[key]
+    // null — формат не читается; готовый просмотр без полос на диске делается заново.
+    if (known === null || (known && (await hasStrips($, known)))) return
+
+    const args = ['-Mode', 'preview', '-CacheDir', cacheDir, '-Size', String(PREVIEW_WIDTH), '-StripBytes', String(STRIP_BYTES)]
+    try {
+      const made = parseJson<Preview | null>(await runScript($, args, image.path), null)
+      await update($, previews, current => ({ ...current, [key]: made }))
+    } catch (failure) {
+      // Сбой запуска не помечает картинку непросматриваемой: следующее открытие попробует снова.
+      await update($, previews, current => Object.fromEntries(Object.entries(current).filter(([one]) => one !== key)))
+      $.ui.toast(`Просмотр не подготовлен: ${failure instanceof Error ? failure.message : String(failure)}`)
+    }
+  })().finally(() => previewRuns.delete(key))
+
+  previewRuns.set(key, run)
+  return run
 }
 
 async function openViewer($: EngineInterface, cacheDir: string, image: LibraryImage): Promise<void> {
@@ -488,7 +511,7 @@ export const register: Register = (on, options) => {
               {position + 1} / {list.length}
             </Text>
             <Button key="viewer:next" label="›" onPress={() => stepViewer($, cacheDir, list, 1)} />
-            <Button key="viewer:copy" label="📋 Копировать путь" onPress={press => copyPath($, viewed.path, press.surface)} />
+            <Button key="viewer:copy" label="📋 Копировать путь" onPress={() => copyPath($, viewed.path)} />
             <Button key="viewer:app" label="↗ Открыть в приложении" onPress={() => openFile($, viewed.path)} />
           </Box>
           <Text dimColor>
@@ -591,7 +614,7 @@ export const register: Register = (on, options) => {
               plain
               dimColor
               label="📋 путь"
-              onPress={press => copyPath($, image.path, press.surface)}
+              onPress={() => copyPath($, image.path)}
             />
             <Button key={`app:${image.path}`} plain dimColor label="↗ открыть" onPress={open} />
           </Box>

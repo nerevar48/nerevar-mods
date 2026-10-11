@@ -3,16 +3,18 @@
 #                   ([{ source, session, path, skipBuildDirs }]), в stdout.
 #   -Mode thumbs  : JSON-массив путей в stdin; для каждого создаёт JPEG-миниатюру
 #                   в -CacheDir (если её ещё нет) и печатает { path: thumbPath|null }.
-#   -Mode preview : JSON-строка пути в stdin; уменьшает картинку до ширины -Size и режет
+#   -Mode preview : JSON-строка пути в stdin; вписывает картинку в -Size × -MaxHeight и режет
 #                   на JPEG-полосы не больше -StripBytes каждая (столько вмещает одна Svg).
-#                   Печатает { width, height, strips: [{ path, height }] } или null.
+#                   Печатает { width, height, strips: [{ path, height }] }, или null, если
+#                   формат не читается; прочие сбои — ненулевой код выхода.
 #   -Mode copy    : JSON-строка в stdin кладётся в буфер обмена.
 param(
   [Parameter(Mandatory)] [ValidateSet('scan', 'thumbs', 'preview', 'copy')] [string] $Mode,
   [string] $CacheDir,
   [int] $Size = 192,
   [int] $Limit = 3000,
-  [int] $StripBytes = 95000
+  [int] $StripBytes = 95000,
+  [int] $MaxHeight = 3200
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,16 +103,29 @@ function Get-JpegBytes([Drawing.Image] $image, [long] $quality) {
   }
 }
 
+# Запись во временный файл и переименование: параллельный запуск не прочтёт файл недописанным.
+# Уже готовый файл (его записал параллельный запуск) не перезаписывается.
+function Write-Atomic([string] $path, [scriptblock] $write) {
+  $temp = "$path.$PID.tmp"
+  & $write $temp
+  try { [IO.File]::Move($temp, $path) } catch { [IO.File]::Delete($temp) }
+}
+
 # Копия картинки, вписанная в $maxWidth × $maxHeight (не больше исходника), на белом фоне.
 function New-Scaled([Drawing.Image] $image, [double] $maxWidth, [double] $maxHeight) {
   $scale = [Math]::Min(1.0, [Math]::Min($maxWidth / $image.Width, $maxHeight / $image.Height))
   $bitmap = [Drawing.Bitmap]::new([Math]::Max(1, [int]($image.Width * $scale)), [Math]::Max(1, [int]($image.Height * $scale)))
-  $graphics = [Drawing.Graphics]::FromImage($bitmap)
   try {
-    $graphics.Clear([Drawing.Color]::White)
-    $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $graphics.DrawImage($image, 0, 0, $bitmap.Width, $bitmap.Height)
-  } finally { $graphics.Dispose() }
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    try {
+      $graphics.Clear([Drawing.Color]::White)
+      $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+      $graphics.DrawImage($image, 0, 0, $bitmap.Width, $bitmap.Height)
+    } finally { $graphics.Dispose() }
+  } catch {
+    $bitmap.Dispose()
+    throw
+  }
   $bitmap
 }
 
@@ -140,35 +155,50 @@ try {
 
   # preview
   $info = [IO.FileInfo]::new([string] $request)
-  $name = Get-CacheName $info "preview$Size|$StripBytes"
+  $name = Get-CacheName $info "preview$Size|$MaxHeight|$StripBytes"
   $manifest = Join-Path $CacheDir "$name.json"
+  # Манифест годится, пока на диске все его полосы.
   if ([IO.File]::Exists($manifest)) {
-    [IO.File]::ReadAllText($manifest)
-    exit 0
+    $cached = [IO.File]::ReadAllText($manifest)
+    $isWhole = @((ConvertFrom-Json $cached).strips | Where-Object { -not [IO.File]::Exists($_.path) }).Count -eq 0
+    if ($isWhole) {
+      $cached
+      exit 0
+    }
   }
 
-  $image = [Drawing.Image]::FromFile($info.FullName)
+  try { $image = [Drawing.Image]::FromFile($info.FullName) } catch {
+    # Формат, который System.Drawing не читает: просмотра нет, это не сбой.
+    'null'
+    exit 0
+  }
   try {
-    $scaled = New-Scaled $image $Size ([double]::MaxValue)
+    # Высокая картинка уменьшается целиком, а не обрезается: не больше $MaxHeight по высоте.
+    $scaled = New-Scaled $image $Size $MaxHeight
     try {
       $strips = [Collections.Generic.List[object]]::new()
-      $stripHeight = 320
-      for ($top = 0; $top -lt $scaled.Height; $top += $stripHeight) {
-        $height = [Math]::Min($stripHeight, $scaled.Height - $top)
-        $strip = $scaled.Clone([Drawing.Rectangle]::new(0, $top, $scaled.Width, $height), $scaled.PixelFormat)
-        try {
-          # Качество снижается, пока полоса не уложится в лимит одной Svg.
-          $quality = 85
-          $bytes = Get-JpegBytes $strip $quality
-          while ($bytes.Length -gt $StripBytes -and $quality -gt 25) {
-            $quality -= 15
+      $top = 0
+      while ($top -lt $scaled.Height) {
+        # Качество снижается, пока полоса не уложится в лимит одной Svg; не уложилась — полоса ниже.
+        $height = [Math]::Min(320, $scaled.Height - $top)
+        while ($true) {
+          $strip = $scaled.Clone([Drawing.Rectangle]::new(0, $top, $scaled.Width, $height), $scaled.PixelFormat)
+          try {
+            $quality = 85
             $bytes = Get-JpegBytes $strip $quality
-          }
-        } finally { $strip.Dispose() }
-        if ($bytes.Length -gt $StripBytes) { throw "полоса $top не уложилась в $StripBytes байт" }
+            while ($bytes.Length -gt $StripBytes -and $quality -gt 25) {
+              $quality -= 15
+              $bytes = Get-JpegBytes $strip $quality
+            }
+          } finally { $strip.Dispose() }
+          if ($bytes.Length -le $StripBytes -or $height -le 16) { break }
+          $height = [Math]::Max(16, [int]($height / 2))
+        }
+        if ($bytes.Length -gt $StripBytes) { throw "полоса на $top px не уложилась в $StripBytes байт" }
         $stripPath = Join-Path $CacheDir "$name-$($strips.Count).jpg"
-        [IO.File]::WriteAllBytes($stripPath, $bytes)
+        Write-Atomic $stripPath { param($temp) [IO.File]::WriteAllBytes($temp, $bytes) }
         $strips.Add([pscustomobject]@{ path = $stripPath; height = $height })
+        $top += $height
       }
       $json = ConvertTo-Json -Compress -Depth 3 -InputObject ([pscustomobject]@{
           width  = $scaled.Width
@@ -177,6 +207,6 @@ try {
         })
     } finally { $scaled.Dispose() }
   } finally { $image.Dispose() }
-  [IO.File]::WriteAllText($manifest, $json)
+  Write-Atomic $manifest { param($temp) [IO.File]::WriteAllText($temp, $json) }
   $json
 } finally { $md5.Dispose() }

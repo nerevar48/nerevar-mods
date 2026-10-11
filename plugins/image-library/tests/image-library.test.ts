@@ -21,6 +21,7 @@ type World = {
   images: Image[]
   scanError: string
   thumbsError: string
+  previewError: string
   isPaneShown: boolean
   missingFiles: string[]
   settle: () => Promise<void>
@@ -38,6 +39,7 @@ function engine(on: On, overrides: Partial<World> = {}): World {
     images: IMAGES,
     scanError: '',
     thumbsError: '',
+    previewError: '',
     isPaneShown: true,
     missingFiles: [],
     settle: async () => {},
@@ -88,7 +90,8 @@ function engine(on: On, overrides: Partial<World> = {}): World {
     }
     if (mode === 'preview') {
       w.previewRequests.push(input)
-      const strips = [0, 1].map(index => ({ path: `C:\Local\strip-${index}.jpg`, height: 320 }))
+      if (w.previewError) return ran(1, '', w.previewError)
+      const strips = [0, 1].map(index => ({ path: `C:\\Local\\strip-${index}.jpg`, height: 320 }))
       return ran(0, JSON.stringify({ width: 1600, height: 640, strips }))
     }
     if (mode === 'copy') {
@@ -312,6 +315,48 @@ describe('image-library', () => {
     expect(await ui.find({ type: 'Text', text: /3 \/ 3/ })).toBeDefined()
 
     await ui.press({ key: 'viewer:back' })
+    expect(await openKeys(ui)).toHaveLength(3)
+  })
+
+  test('a failed preview run is retried on the next open, not marked unviewable', async ($, on) => {
+    const w = engine(on, { previewError: 'нет памяти' })
+    await openLibrary($)
+    const ui = await pane($, 'desktop')
+    await ui.press({ key: `view:${IMAGES[0]!.path}` })
+    expect(w.toasts).toEqual(['Просмотр не подготовлен: нет памяти'])
+    await ui.press({ key: 'viewer:back' })
+
+    w.previewError = ''
+    await ui.press({ key: `view:${IMAGES[0]!.path}` })
+    expect(w.previewRequests).toEqual([IMAGES[0]!.path, IMAGES[0]!.path])
+    expect(await ui.findAll({ type: 'Svg' })).toHaveLength(2)
+  })
+
+  test('strips gone from the cache are made again when the picture is opened', async ($, on) => {
+    const w = engine(on)
+    await openLibrary($)
+    const ui = await pane($, 'desktop')
+    await ui.press({ key: `view:${IMAGES[0]!.path}` })
+    await ui.press({ key: 'viewer:back' })
+    await ui.press({ key: `view:${IMAGES[0]!.path}` })
+    expect(w.previewRequests).toHaveLength(1)
+
+    w.missingFiles = ['C:\\Local\\strip-1.jpg']
+    await ui.press({ key: 'viewer:back' })
+    await ui.press({ key: `view:${IMAGES[0]!.path}` })
+    expect(w.previewRequests).toHaveLength(2)
+  })
+
+  test('the viewer goes back to the gallery when its file is gone after a rescan', async ($, on) => {
+    const w = engine(on)
+    await openLibrary($)
+    const ui = await pane($, 'desktop')
+    await ui.press({ key: `view:${IMAGES[0]!.path}` })
+    w.images = IMAGES.slice(1)
+    await finishTurn($, w)
+    expect(await openKeys(ui)).toHaveLength(2)
+    w.images = IMAGES
+    await finishTurn($, w)
     expect(await openKeys(ui)).toHaveLength(3)
   })
 
