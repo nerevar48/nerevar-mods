@@ -11,7 +11,7 @@ type World = {
   calls: string[]
   prompts: string[]
   toasts: string[]
-  below?: string
+  below?: string | RenderElement
 }
 
 function world(overrides: Partial<World> = {}): World {
@@ -57,8 +57,9 @@ function engine(on: On, w: World) {
   on('turn.complete', ($, e) => ({ text: e.answer, usage: e.usage }))
   on('ui.invalidate', () => ({ value: undefined }))
   on('ui.render', ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
-    return (w.below === undefined ? { type: 'engine', ref: 0 } : h(Text, {}, w.below)) as RenderElement
+    const { Text } = $.ui.resolve(e)
+    if (w.below === undefined) return { type: 'engine', ref: 0 }
+    return (typeof w.below === 'string' ? h(Text, {}, w.below) : w.below) as RenderElement
   })
 }
 
@@ -95,7 +96,6 @@ describe('pr-merge', () => {
       const ui = await band($, surface)
       const texts = await ui.findAll({ type: 'Text' })
       expect(texts[0]?.text).toBe('PR #40 Крафт → main · нет проверок · конфликт')
-      expect(texts.some(t => t.text.startsWith('─'))).toBe(false)
       expect(texts.find(t => t.text === 'PR #40')?.props).toMatchObject({ color: 'magentaBright', bold: true })
       expect(texts.find(t => t.text === 'конфликт')?.props).toMatchObject({ color: 'red' })
       const labels = (await ui.findAll({ type: 'Button' })).map(b => b.props.label)
@@ -107,7 +107,20 @@ describe('pr-merge', () => {
       await $.session.start({ cwd: '.' })
       const texts = (await (await band($, surface)).findAll({ type: 'Text' })).map(t => t.text)
       expect(texts[0]).toBe('PR #40 Крафт → main · нет проверок')
-      expect(texts.slice(-2)).toEqual(['─'.repeat(200), '⏱ 2с'])
+      expect(texts.at(-1)).toBe('⏱ 2с')
+    })
+
+    test(`${surface}: whatever the chain order, the time goes above the PR and the progress below`, async ($, on) => {
+      const section = (rank: number, text: string) => ({ type: 'Box', props: { key: `band-section:${rank}` }, children: [text] })
+      const below = { type: 'Box', props: { key: 'band-sections', flexDirection: 'column' }, children: [
+        section(10, '⏱ 2с'), section(30, '● Fix login'), { type: 'engine', ref: 0 },
+      ] } as RenderElement
+      engine(on, world({ below }))
+      await $.session.start({ cwd: '.' })
+      const boxes = await (await band($, surface)).findAll({ type: 'Box' })
+      const sections = boxes.filter(b => String(b.props.key).startsWith('band-section:'))
+      expect(sections.map(b => b.props.key)).toEqual(['band-section:10', 'band-section:20', 'band-section:30'])
+      expect(sections[1]?.text).toStartWith('PR #40')
     })
 
     test(`${surface}: a clean PR merges, then main is switched to, fetched and pulled`, async ($, on) => {

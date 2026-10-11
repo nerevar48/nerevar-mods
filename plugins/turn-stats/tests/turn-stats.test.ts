@@ -146,7 +146,7 @@ describe('turn-stats', () => {
       engine(on, { limits: [], below: 'PR #40' })
       await turn($, 't1', 2_000)
       const text = await shown(await band($, surface))
-      expect(text).toBe(`⏱ 2с (ход 2с) | ${'─'.repeat(200)} | PR #40`)
+      expect(text).toBe('⏱ 2с (ход 2с) | PR #40')
     })
   }
 

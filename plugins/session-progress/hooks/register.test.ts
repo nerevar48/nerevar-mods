@@ -39,8 +39,6 @@ test('the progress tool draws steps, advances current and finishes', async ($, o
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
     await expectShown(ui, surface, /Fix login/, /Test/, /2\/4/, /50%/)
-    // Over core's own drawing there is no rule.
-    expect((await ui.findAll({ type: 'Text' })).some(t => t.text.startsWith('─'))).toBe(false)
     await ui.unmount()
   }
   await $.tool.call({ tool: 'mcp__session-progress__progress', finished: true })
@@ -59,10 +57,23 @@ test("the band beneath (another plugin's) still shows under the bar", async ($, 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
     await expectShown(ui, surface, /Fix login/)
-    const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
-    expect(texts.slice(-2)).toEqual(['─'.repeat(100), '⏱ 2с'])
+    expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('⏱ 2с')
     await ui.unmount()
   }
+})
+
+test('the bar goes below the ranked sections of the mods beneath', async ($, on) => {
+  const section = (rank: number, text: string) => ({ type: 'Box', props: { key: `band-section:${rank}` }, children: [text] })
+  on('ui.render', { component: 'AbovePrompt' }, () =>
+    ({ type: 'Box', props: { key: 'band-sections', flexDirection: 'column' }, children: [
+      section(10, '⏱ 2с'), section(20, 'PR #40'), { type: 'engine', ref: 0 },
+    ] }) as RenderElement,
+  )
+  await $.tool.call({ tool: 'mcp__session-progress__progress', title: 'Fix login', steps: ['Read code', 'Patch'] })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const sections = (await ui.findAll({ type: 'Box' })).filter(b => String(b.props.key).startsWith('band-section:'))
+  expect(sections.map(b => b.text)).toEqual(['⏱ 2с', 'PR #40', expect.stringContaining('Fix login')])
+  await ui.unmount()
 })
 
 test('a todo list moves the bar and keeps the reported title', async ($, on) => {

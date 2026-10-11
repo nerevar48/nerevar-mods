@@ -1,10 +1,29 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PromptOrigin, Register } from 'claude-code'
+import type { EngineInterface, PromptOrigin, Register, RenderElement, RenderNode } from 'claude-code'
 
 import type { Plan, TaskItem } from '../types'
 
 const plan = atom({ plugin: 'session-progress', key: 'plan' } as const, null)
 const tasks = atom({ plugin: 'session-progress', key: 'tasks' } as const, [])
+
+// The band is shared, and the engine chains mods in no fixed order: each mod
+// files its section under a rank (time 10, PR 20, progress 30), the sections
+// beneath come up as one column, and the column is kept sorted by rank, the
+// rest (core's own drawing) last.
+const COLUMN = 'band-sections'
+const SECTION = 'band-section:'
+const RANK = 30
+
+function rankOf(node: RenderNode): number {
+  const key = typeof node === 'object' && node.type === 'Box' ? node.props?.key : undefined
+  return typeof key === 'string' && key.startsWith(SECTION) ? Number(key.slice(SECTION.length)) : Number.MAX_SAFE_INTEGER
+}
+
+function stacked(below: RenderElement, section: RenderElement): RenderElement {
+  const rest = below.type === 'Box' && below.props?.key === COLUMN ? (below.children ?? []) : [below]
+  const children = [section, ...rest].sort((a, b) => rankOf(a) - rankOf(b))
+  return { type: 'Box', props: { key: COLUMN, flexDirection: 'column' }, children }
+}
 
 const TOOL = 'mcp__session-progress__progress'
 
@@ -362,16 +381,9 @@ export const register: Register = (on, options) => {
     const p = await read($, plan)
     if (p === null || e.props.hasSurvey) return next(e)
 
-    // The band is shared: draw our row above whatever the plugins beneath draw,
-    // parted from them by a rule; core's own drawing ('engine') gets none.
     const below = await next(e)
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
-    const rule = below.type !== 'engine' && (
-      <Text dimColor wrap="truncate-end">
-        {'─'.repeat(e.props.bodyColumns)}
-      </Text>
-    )
     const percent = `${Math.round(ratio(p) * 100)}%`
     const dismiss = <Button key="session-progress-dismiss" label="✕" plain role="dismiss" onPress={() => update($, plan, () => null)} />
 
@@ -380,15 +392,14 @@ export const register: Register = (on, options) => {
       // About 8 CSS px per reported column; the rest is the dismiss and its gap.
       const width = Math.max(180, Math.min(1600, (e.props.bodyColumns || 100) * 8 - 48))
       const alt = `${p.title}${p.current ? ` · ${p.current}` : ''}: ${label(p)}, ${percent}`
-      return (
-        <Box flexDirection="column">
+      return stacked(
+        below,
+        <Box key={`${SECTION}${RANK}`} flexDirection="column">
           <Box flexDirection="row" alignItems="center" gap={1}>
             <Svg source={rowSvg(p, width, e.props.isWorking)} alt={alt} width={width} height={H} />
             {dismiss}
           </Box>
-          {rule}
-          {below}
-        </Box>
+        </Box>,
       )
     }
 
@@ -397,8 +408,9 @@ export const register: Register = (on, options) => {
     const titleW = Math.max(8, Math.min(40, head.length + 2, Math.floor(cols / 3)))
     const width = Math.max(6, Math.min(40, cols - titleW - 24))
     const color = p.isFinished ? DONE : ACCENT
-    return (
-      <Box flexDirection="column">
+    return stacked(
+      below,
+      <Box key={`${SECTION}${RANK}`} flexDirection="column">
         <Box flexDirection="row" gap={2}>
           <Box width={titleW} flexShrink={0}>
             <Text color={color}>● </Text>
@@ -412,9 +424,7 @@ export const register: Register = (on, options) => {
           <Text dimColor>{percent}</Text>
           {dismiss}
         </Box>
-        {rule}
-        {below}
-      </Box>
+      </Box>,
     )
   })
 }
