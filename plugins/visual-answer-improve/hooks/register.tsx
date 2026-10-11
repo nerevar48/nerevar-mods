@@ -13,6 +13,7 @@ const SECTIONS: Record<SectionKind, { ru: Titles; en: Titles; option: string }> 
   decision: { ru: ['Требуется решение'], en: ['Decision needed'], option: 'decisionColor' },
 }
 
+// On a tab with no fill (its color option cleared) the label keeps the theme's text color.
 const TAB_TEXT = '#000000'
 
 const RULE =
@@ -51,7 +52,7 @@ for (const [kind, s] of Object.entries(SECTIONS) as [SectionKind, (typeof SECTIO
 
 const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/
 const BOLD_LINE = /^ {0,3}(\*\*|__)(.+?)\1\s*:?\s*$/
-const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)/
 
 // A marked section runs from its heading to the next heading at its level or
 // above, the next marked heading, or the end. Headings inside code fences are text.
@@ -64,7 +65,7 @@ function split(markdown: string): Segment[] {
   let fence = ''
 
   const flush = () => {
-    const text = lines.join('\n').replace(/^\s*\n|\n\s*$/g, '')
+    const text = lines.join('\n').replace(/^\s*\n|\s+$/g, '')
     if (text.trim()) out.push(kind === 'text' ? { kind, text } : { kind, label, text })
     lines = []
   }
@@ -119,7 +120,7 @@ export const register: Register = (on, options) => {
           return (
             <Box flexDirection="column" marginTop={1}>
               <Box alignSelf="flex-start" paddingX={1} backgroundColor={c}>
-                <Text color={TAB_TEXT} backgroundColor={c} bold>
+                <Text color={c && TAB_TEXT} backgroundColor={c} bold>
                   {s.label}
                 </Text>
               </Box>

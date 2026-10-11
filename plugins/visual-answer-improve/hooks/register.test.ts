@@ -60,6 +60,16 @@ test('an English heading and a custom color', { options: { doneColor: 'green' } 
   expect(await ui.find({ type: 'Markdown', text: /^## Next\nmore$/ })).toBeDefined()
 })
 
+test('CRLF line endings keep fences and a cleared color keeps the label readable', { options: { decisionColor: '' } }, async ($, on) => {
+  on('ui.render', { component: 'AssistantMessage' }, () => ({ type: 'engine', ref: 0 }))
+  const text = '### Сделано\r\n```md\r\n### Требуется решение\r\n```\r\n\r\n### Требуется решение\r\n1. Да?'
+  const ui = await $.ui.mount({ ...message(text), surface: 'terminal' })
+  expect(await ui.find({ type: 'Markdown', text: /^```md\r\n### Требуется решение\r\n```$/ })).toBeDefined()
+  const tab = await ui.find({ type: 'Text', text: /^Требуется решение$/ })
+  expect(tab?.props.color).toBeUndefined()
+  expect(tab?.props.backgroundColor).toBeUndefined()
+})
+
 test("prompts in the person's words carry the rule, reports do not", async ($, on) => {
   on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
   const typed = await $.prompt.submit({ text: 'Сделай мод', wait: false, origin: { kind: 'composer' } })
