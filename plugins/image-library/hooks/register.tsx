@@ -29,7 +29,7 @@ const status = atom({ plugin: 'image-library', key: 'status' } as const, 'idle')
 const error = atom({ plugin: 'image-library', key: 'error' } as const, '')
 const filter = atom({ plugin: 'image-library', key: 'filter' } as const, 'all')
 const isOldestFirst = atom({ plugin: 'image-library', key: 'isOldestFirst' } as const, false)
-const limit = atom({ plugin: 'image-library', key: 'limit' } as const, PAGE)
+const page = atom({ plugin: 'image-library', key: 'page' } as const, 0)
 const thumbs = atom({ plugin: 'image-library', key: 'thumbs' } as const, {})
 
 type Root = { source: Source; session: string | null; path: string; skipBuildDirs: boolean }
@@ -102,6 +102,29 @@ function thumbKey(image: LibraryImage): string {
   return `${image.path}|${image.mtimeMs}`
 }
 
+function pageCount(total: number): number {
+  return Math.max(1, Math.ceil(total / PAGE))
+}
+
+// Изображения страницы; номер за последней страницей (список сократился) — последняя.
+function pageOf(list: readonly LibraryImage[], index: number): { images: LibraryImage[]; index: number } {
+  const clamped = Math.min(Math.max(0, index), pageCount(list.length) - 1)
+  return { images: list.slice(clamped * PAGE, clamped * PAGE + PAGE), index: clamped }
+}
+
+// Номера страниц в переключателе: первая, последняя и соседи текущей; null — пропуск «…».
+function pageNumbers(current: number, total: number): (number | null)[] {
+  const numbers: (number | null)[] = []
+  for (let index = 0; index < total; index++) {
+    if (index === 0 || index === total - 1 || Math.abs(index - current) <= 2) {
+      numbers.push(index)
+    } else if (numbers.at(-1) !== null) {
+      numbers.push(null)
+    }
+  }
+  return numbers
+}
+
 function sortedFiltered(list: readonly LibraryImage[], current: Filter, oldestFirst: boolean): LibraryImage[] {
   const chosen = list.filter(image => matches(image, current))
   return oldestFirst ? chosen.reverse() : chosen
@@ -123,14 +146,14 @@ function ensureThumbs($: EngineInterface, cacheDir: string): Promise<void> {
         const known = await read($, thumbs)
         const shown = sortedFiltered(await read($, images), await read($, filter), await read($, isOldestFirst))
         // Миниатюра, файл которой исчез из кэша на диске, делается заново.
-        const page = shown.slice(0, await read($, limit)).filter(image => THUMBABLE.includes(extensionOf(image.path)))
+        const visible = pageOf(shown, await read($, page)).images.filter(image => THUMBABLE.includes(extensionOf(image.path)))
         const isMade = await Promise.all(
-          page.map(async image => {
+          visible.map(async image => {
             const thumb = known[thumbKey(image)]
             return thumb === undefined ? false : thumb === null || (await $.fs.exists(thumb))
           }),
         )
-        const missing = page.filter((_, index) => !isMade[index])
+        const missing = visible.filter((_, index) => !isMade[index])
 
         if (missing.length > 0) {
           const args = ['-Mode', 'thumbs', '-CacheDir', cacheDir, '-Size', String(THUMB_PX)]
@@ -284,7 +307,18 @@ async function changeView($: EngineInterface, cacheDir: string, apply: () => Pro
 
 async function setFilter($: EngineInterface, value: Filter): Promise<void> {
   await update($, filter, () => value)
-  await update($, limit, () => PAGE)
+  await update($, page, () => 0)
+}
+
+async function toggleSort($: EngineInterface): Promise<void> {
+  await update($, isOldestFirst, value => !value)
+  await update($, page, () => 0)
+}
+
+// Новая страница показывается с её начала.
+async function goToPage($: EngineInterface, index: number): Promise<void> {
+  await update($, page, () => index)
+  await $.ui.scroll({ to: 'start', in: PANE }).catch(() => undefined)
 }
 
 export const register: Register = (on, options) => {
@@ -334,12 +368,37 @@ export const register: Register = (on, options) => {
     const all = await read($, images)
     const current = await read($, filter)
     const oldestFirst = await read($, isOldestFirst)
-    const shownLimit = await read($, limit)
+    const storedPage = await read($, page)
     const known = await read($, thumbs)
     const scanStatus = await read($, status)
     const scanError = await read($, error)
     const chosen = sortedFiltered(all, current, oldestFirst)
-    const page = chosen.slice(0, shownLimit)
+    const { images: shown, index: pageIndex } = pageOf(chosen, storedPage)
+    const pages = pageCount(chosen.length)
+    const openPage = (index: number) => changeView($, cacheDir, () => goToPage($, index))
+
+    // Переключатель страниц: ‹ 1 … 4 5 [6] 7 8 … 40 ›; рисуется над сеткой и под ней.
+    const pager = (place: string) =>
+      pages > 1 && (
+        <Box key={`pager:${place}`} flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
+          <Button key={`${place}:prev`} label="‹" onPress={() => openPage(Math.max(0, pageIndex - 1))} />
+          {pageNumbers(pageIndex, pages).map((number, slot) =>
+            number === null ? (
+              <Text key={`${place}:gap:${slot}`} dimColor>
+                …
+              </Text>
+            ) : (
+              <Button
+                key={`${place}:page:${number + 1}`}
+                label={String(number + 1)}
+                variant={number === pageIndex ? 'primary' : 'secondary'}
+                onPress={() => openPage(number)}
+              />
+            ),
+          )}
+          <Button key={`${place}:next`} label="›" onPress={() => openPage(Math.min(pages - 1, pageIndex + 1))} />
+        </Box>
+      )
 
     const header = (
       <Box key="header" flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
@@ -354,19 +413,21 @@ export const register: Register = (on, options) => {
         <Button
           key="sort"
           label={oldestFirst ? '↑ Сначала старые' : '↓ Сначала новые'}
-          onPress={() => changeView($, cacheDir, () => update($, isOldestFirst, value => !value))}
+          onPress={() => changeView($, cacheDir, () => toggleSort($))}
         />
         <Button key="refresh" label="Обновить" onPress={() => scan($, settings, cacheDir)} />
         <Text dimColor>
-          {scanStatus === 'scanning' ? 'Сканирую…' : `${chosen.length} изобр.`}
+          {scanStatus === 'scanning'
+            ? 'Сканирую…'
+            : `${chosen.length} изобр.${pages > 1 ? ` · стр. ${pageIndex + 1} из ${pages}` : ''}`}
         </Text>
       </Box>
     )
 
-    const pictures = 'Svg' in ui ? await Promise.all(page.map(image => pictureOf($, image, known[thumbKey(image)]))) : []
+    const pictures = 'Svg' in ui ? await Promise.all(shown.map(image => pictureOf($, image, known[thumbKey(image)]))) : []
     const tiles: RenderElement[] = []
 
-    for (const [index, image] of page.entries()) {
+    for (const [index, image] of shown.entries()) {
       const caption = `${dateText(image.mtimeMs)} · ${sourceText(image, currentSession)}`
       const open = () => openFile($, image.path)
 
@@ -402,18 +463,13 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column" gap={1}>
         {header}
+        {pager('top')}
         {scanStatus === 'error' && <Text color="red">Ошибка сканирования: {scanError}</Text>}
         {chosen.length === 0 && scanStatus !== 'scanning' && <Text dimColor>Изображений не найдено.</Text>}
         <Box key="grid" flexDirection={e.surface === 'terminal' ? 'column' : 'row'} flexWrap="wrap" gap={1}>
           {tiles}
         </Box>
-        {chosen.length > page.length && (
-          <Button
-            key="more"
-            label={`Показать ещё (${chosen.length - page.length})`}
-            onPress={() => changeView($, cacheDir, () => update($, limit, value => value + PAGE))}
-          />
-        )}
+        {pager('bottom')}
       </Box>
     )
   })

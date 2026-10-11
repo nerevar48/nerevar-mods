@@ -24,8 +24,9 @@ declare module 'claude-code' {
       error: string
       filter: Filter
       isOldestFirst: boolean
-      limit: number
-      // Путь изображения → путь его JPEG-миниатюры; null — миниатюру не сделать.
+      // Номер страницы галереи, с нуля.
+      page: number
+      // «путь|mtime» изображения → путь его JPEG-миниатюры; null — миниатюру не сделать.
       thumbs: Record<string, string | null>
     }
   }

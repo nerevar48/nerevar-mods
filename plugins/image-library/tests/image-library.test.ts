@@ -223,6 +223,38 @@ describe('image-library', () => {
     expect(w.toasts).toEqual([`Файла уже нет: ${IMAGES[1]!.path}`])
   })
 
+  test('pages of 24: the pager moves between them, thumbnails follow, the filter goes back to page 1', async ($, on) => {
+    const many: Image[] = Array.from({ length: 60 }, (_, index) => ({
+      path: `${CWD}\\shots\\${String(index).padStart(2, '0')}.png`,
+      name: `${index}.png`,
+      source: 'project',
+      session: null,
+      size: 10_000,
+      mtimeMs: 10_000 - index,
+    }))
+    const w = engine(on, { images: many })
+    await openLibrary($)
+    const ui = await pane($, 'desktop')
+    const pathsOf = (keys: string[]) => keys.map(key => key.slice('open:'.length))
+    expect(pathsOf(await openKeys(ui))).toEqual(many.slice(0, 24).map(image => image.path))
+    expect(await ui.find({ type: 'Text', text: /стр\. 1 из 3/ })).toBeDefined()
+    expect((await ui.findAll({ type: 'Button' })).filter(b => String(b.props.key).startsWith('top:page:')).map(b => b.props.label)).toEqual(['1', '2', '3'])
+
+    await ui.press({ key: 'bottom:page:2' })
+    expect(pathsOf(await openKeys(ui))).toEqual(many.slice(24, 48).map(image => image.path))
+    expect(w.thumbRequests.at(-1)).toEqual(many.slice(24, 48).map(image => image.path))
+
+    await ui.press({ key: 'top:next' })
+    expect(pathsOf(await openKeys(ui))).toEqual(many.slice(48).map(image => image.path))
+    await ui.press({ key: 'top:next' })
+    expect(await ui.find({ type: 'Text', text: /стр\. 3 из 3/ })).toBeDefined()
+
+    await ui.press({ key: 'top:prev' })
+    expect(await ui.find({ type: 'Text', text: /стр\. 2 из 3/ })).toBeDefined()
+    await ui.select({ key: 'filter', value: 'project' })
+    expect(await ui.find({ type: 'Text', text: /стр\. 1 из 3/ })).toBeDefined()
+  })
+
   test('sorting flips to oldest first', async ($, on) => {
     engine(on)
     await openLibrary($)
