@@ -23,6 +23,13 @@
       "description": "Progress bar above the prompt for the current session's task: follows the todo list and the plan the model reports through its progress tool.",
       "version": "0.1.0",
       "category": "mod"
+    },
+    {
+      "name": "copy-session-link",
+      "source": "./plugins/copy-session-link",
+      "description": "Кнопка в футере поля ввода Claude Code Desktop, копирующая в буфер обмена ссылку на текущую сессию",
+      "version": "0.1.0",
+      "category": "mod"
     }
   ]
 }

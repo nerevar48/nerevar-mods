@@ -7,6 +7,7 @@ Marketplace модов Claude Code.
 | `turn-stats` | Полоса над полем ввода: время работы сессии, токены (включая субагентов), квота |
 | `pr-merge` | Полоса с PR текущей ветки и кнопкой Merge через `gh` (настройки: `mergeMethod`, `deleteBranch`) |
 | `session-progress` | Прогресс-бар задачи сессии по todo-списку и плану модели (настройка: `language`) |
+| `copy-session-link` | Кнопка «🔗 Ссылка» в футере поля ввода Claude Code Desktop: копирует ссылку `claude://` на текущую сессию |
 
 ## Установка
 
@@ -15,6 +16,7 @@ Marketplace модов Claude Code.
 /plugin install turn-stats@nerevar-mods
 /plugin install pr-merge@nerevar-mods
 /plugin install session-progress@nerevar-mods
+/plugin install copy-session-link@nerevar-mods
 ```
 
 Или в `~/.claude/settings.json`:
@@ -26,7 +28,8 @@ Marketplace модов Claude Code.
 "enabledPlugins": {
   "turn-stats@nerevar-mods": true,
   "pr-merge@nerevar-mods": true,
-  "session-progress@nerevar-mods": true
+  "session-progress@nerevar-mods": true,
+  "copy-session-link@nerevar-mods": true
 }
 ```
 
