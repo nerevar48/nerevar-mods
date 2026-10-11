@@ -57,7 +57,7 @@ test("the band beneath (another plugin's) still shows under the bar", async ($, 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
     await expectShown(ui, surface, /Fix login/)
-    expect(await ui.find({ type: 'Text', text: /⏱ 2с/ })).toBeDefined()
+    expect((await ui.findAll({ type: 'Text' })).at(-1)?.text).toBe('⏱ 2с')
     await ui.unmount()
   }
 })
