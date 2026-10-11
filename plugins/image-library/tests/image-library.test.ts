@@ -255,6 +255,28 @@ describe('image-library', () => {
     expect(await ui.find({ type: 'Text', text: /стр\. 1 из 3/ })).toBeDefined()
   })
 
+  test('two quick › presses move two pages; a gap of one page shows that page', async ($, on) => {
+    const many: Image[] = Array.from({ length: 240 }, (_, index) => ({
+      path: `${CWD}\shots\${index}.png`,
+      name: `${index}.png`,
+      source: 'project',
+      session: null,
+      size: 10_000,
+      mtimeMs: 100_000 - index,
+    }))
+    engine(on, { images: many })
+    await openLibrary($)
+    const ui = await pane($, 'desktop')
+    await Promise.all([ui.press({ key: 'top:next' }), ui.press({ key: 'top:next' })])
+    await ui.press({ key: 'top:next' })
+    await ui.press({ key: 'top:next' })
+    expect(await ui.find({ type: 'Text', text: /стр\. 5 из 10/ })).toBeDefined()
+    const labels = (await ui.findAll({ type: 'Button' }))
+      .filter(b => /^top:(page|gap)/.test(String(b.props.key)))
+      .map(b => b.props.label)
+    expect(labels).toEqual(['1', '2', '3', '4', '5', '6', '7', '10'])
+  })
+
   test('sorting flips to oldest first', async ($, on) => {
     engine(on)
     await openLibrary($)

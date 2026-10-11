@@ -113,10 +113,12 @@ function pageOf(list: readonly LibraryImage[], index: number): { images: Library
 }
 
 // Номера страниц в переключателе: первая, последняя и соседи текущей; null — пропуск «…».
+// Пропуск ровно одной страницы показывает её саму.
 function pageNumbers(current: number, total: number): (number | null)[] {
+  const isNear = (index: number) => index === 0 || index === total - 1 || Math.abs(index - current) <= 2
   const numbers: (number | null)[] = []
   for (let index = 0; index < total; index++) {
-    if (index === 0 || index === total - 1 || Math.abs(index - current) <= 2) {
+    if (isNear(index) || (isNear(index - 1) && isNear(index + 1))) {
       numbers.push(index)
     } else if (numbers.at(-1) !== null) {
       numbers.push(null)
@@ -150,7 +152,7 @@ function ensureThumbs($: EngineInterface, cacheDir: string): Promise<void> {
         const isMade = await Promise.all(
           visible.map(async image => {
             const thumb = known[thumbKey(image)]
-            return thumb === undefined ? false : thumb === null || (await $.fs.exists(thumb))
+            return thumb === undefined ? false : thumb === null || (await $.fs.exists(thumb).catch(() => false))
           }),
         )
         const missing = visible.filter((_, index) => !isMade[index])
@@ -186,6 +188,8 @@ async function scan($: EngineInterface, settings: Settings, cacheDir: string): P
     if (generation !== scanGeneration) return
     const present = new Set(found.map(thumbKey))
     await update($, images, () => found)
+    // Список мог сократиться: номер страницы остаётся в его пределах.
+    await update($, page, current => Math.min(current, pageCount(found.length) - 1))
     await update($, thumbs, current => Object.fromEntries(Object.entries(current).filter(([key]) => present.has(key))))
     await update($, error, () => '')
     await update($, status, () => 'idle')
@@ -315,9 +319,10 @@ async function toggleSort($: EngineInterface): Promise<void> {
   await update($, page, () => 0)
 }
 
-// Новая страница показывается с её начала.
-async function goToPage($: EngineInterface, index: number): Promise<void> {
-  await update($, page, () => index)
+// Переход на страницу (move — от текущей, чтобы два быстрых нажатия «›» дали два шага)
+// и прокрутка к её началу, когда она уже нарисована.
+async function goToPage($: EngineInterface, cacheDir: string, total: number, move: (current: number) => number): Promise<void> {
+  await changeView($, cacheDir, () => update($, page, current => Math.min(Math.max(0, move(current)), pageCount(total) - 1)))
   await $.ui.scroll({ to: 'start', in: PANE }).catch(() => undefined)
 }
 
@@ -375,13 +380,13 @@ export const register: Register = (on, options) => {
     const chosen = sortedFiltered(all, current, oldestFirst)
     const { images: shown, index: pageIndex } = pageOf(chosen, storedPage)
     const pages = pageCount(chosen.length)
-    const openPage = (index: number) => changeView($, cacheDir, () => goToPage($, index))
+    const openPage = (move: (current: number) => number) => goToPage($, cacheDir, chosen.length, move)
 
     // Переключатель страниц: ‹ 1 … 4 5 [6] 7 8 … 40 ›; рисуется над сеткой и под ней.
     const pager = (place: string) =>
       pages > 1 && (
         <Box key={`pager:${place}`} flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
-          <Button key={`${place}:prev`} label="‹" onPress={() => openPage(Math.max(0, pageIndex - 1))} />
+          <Button key={`${place}:prev`} label="‹" onPress={() => openPage(index => index - 1)} />
           {pageNumbers(pageIndex, pages).map((number, slot) =>
             number === null ? (
               <Text key={`${place}:gap:${slot}`} dimColor>
@@ -392,11 +397,11 @@ export const register: Register = (on, options) => {
                 key={`${place}:page:${number + 1}`}
                 label={String(number + 1)}
                 variant={number === pageIndex ? 'primary' : 'secondary'}
-                onPress={() => openPage(number)}
+                onPress={() => openPage(() => number)}
               />
             ),
           )}
-          <Button key={`${place}:next`} label="›" onPress={() => openPage(Math.min(pages - 1, pageIndex + 1))} />
+          <Button key={`${place}:next`} label="›" onPress={() => openPage(index => index + 1)} />
         </Box>
       )
 
