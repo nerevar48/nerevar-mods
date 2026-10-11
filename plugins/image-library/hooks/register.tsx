@@ -122,9 +122,15 @@ function ensureThumbs($: EngineInterface, cacheDir: string): Promise<void> {
         isThumbsAgain = false
         const known = await read($, thumbs)
         const shown = sortedFiltered(await read($, images), await read($, filter), await read($, isOldestFirst))
-        const missing = shown
-          .slice(0, await read($, limit))
-          .filter(image => !(thumbKey(image) in known) && THUMBABLE.includes(extensionOf(image.path)))
+        // Миниатюра, файл которой исчез из кэша на диске, делается заново.
+        const page = shown.slice(0, await read($, limit)).filter(image => THUMBABLE.includes(extensionOf(image.path)))
+        const isMade = await Promise.all(
+          page.map(async image => {
+            const thumb = known[thumbKey(image)]
+            return thumb === undefined ? false : thumb === null || (await $.fs.exists(thumb))
+          }),
+        )
+        const missing = page.filter((_, index) => !isMade[index])
 
         if (missing.length > 0) {
           const args = ['-Mode', 'thumbs', '-CacheDir', cacheDir, '-Size', String(THUMB_PX)]

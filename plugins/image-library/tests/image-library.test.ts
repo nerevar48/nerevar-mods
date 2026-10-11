@@ -171,6 +171,14 @@ describe('image-library', () => {
     expect(w.thumbRequests).toEqual([[IMAGES[0]!.path], [IMAGES[0]!.path]])
   })
 
+  test('a thumbnail whose cached file vanished is made again', async ($, on) => {
+    const w = engine(on)
+    await openLibrary($)
+    w.missingFiles = ['C:\\Local\\thumb.jpg']
+    await (await pane($, 'desktop')).press({ key: 'sort' })
+    expect(w.thumbRequests).toEqual([[IMAGES[0]!.path], [IMAGES[0]!.path]])
+  })
+
   test('a finished turn rescans only while the pane is on screen', async ($, on) => {
     const w = engine(on, { isPaneShown: false })
     await openLibrary($)

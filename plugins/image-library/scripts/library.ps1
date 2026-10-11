@@ -12,8 +12,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # Node пишет и читает UTF-8; без этого кириллица в путях декодируется как OEM-кодировка.
-[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
-[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+# Без привязанной консоли присваивание может бросить «The handle is invalid»: тогда остаётся как есть.
+try {
+  [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+  [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+} catch {}
 $inputText = [Console]::In.ReadToEnd()
 $request = if ($inputText.Trim()) { ConvertFrom-Json $inputText } else { @() }
 
