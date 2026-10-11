@@ -101,6 +101,10 @@ function split(markdown: string): Segment[] {
 // The tab on surfaces that draw SVG: a browser-like tab with rounded top
 // corners, set in past the frame's rounded corner and sitting on its top edge.
 // The label's width is estimated, so the tab is a little wider than the text.
+// Only a hex color goes into the SVG: a theme key means nothing there, and such
+// a color keeps the text tab, which the surface resolves.
+
+const HEX = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i
 
 const TAB = { height: 24, radius: 6, inset: 12, padding: 12, charWidth: 8, fontSize: 13 }
 
@@ -134,7 +138,8 @@ export const register: Register = (on, options) => {
     if (!segments.some(s => s.kind !== 'text')) return next(e)
 
     const { Box, Text, Markdown } = $.ui.resolve(e)
-    // Every surface but the terminal draws SVG.
+    // Every surface but the terminal draws SVG; resolved again so the narrowed
+    // `e` narrows the table (`'Svg' in table` holds on the terminal too).
     const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
     return (
       <Box flexDirection="column">
@@ -143,7 +148,7 @@ export const register: Register = (on, options) => {
           const c = color(s.kind)
           return (
             <Box flexDirection="column" marginTop={1}>
-              {Svg && c ? (
+              {Svg && c && HEX.test(c) ? (
                 <Svg alt={s.label} {...tabSvg(s.label, c)} />
               ) : (
                 <Box alignSelf="flex-start" marginLeft={2} paddingX={1} backgroundColor={c}>
