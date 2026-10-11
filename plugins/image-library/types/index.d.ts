@@ -14,6 +14,9 @@ export type LibraryImage = {
 // all | project | codex | sessions (все сессии) | session:<id>
 export type Filter = string
 
+// Картинка для просмотра, уменьшенная до ширины width и нарезанная на JPEG-полосы.
+export type Preview = { width: number; height: number; strips: { path: string; height: number }[] }
+
 export type ScanStatus = 'idle' | 'scanning' | 'error'
 
 declare module 'claude-code' {
@@ -28,6 +31,10 @@ declare module 'claude-code' {
       page: number
       // «путь|mtime» изображения → путь его JPEG-миниатюры; null — миниатюру не сделать.
       thumbs: Record<string, string | null>
+      // Путь картинки, открытой в просмотре; null — показана галерея.
+      viewing: string | null
+      // «путь|mtime» → полосы просмотра; null — просмотр не сделать.
+      previews: Record<string, Preview | null>
     }
   }
 }

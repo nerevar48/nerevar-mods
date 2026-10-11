@@ -26,6 +26,8 @@ type World = {
   settle: () => Promise<void>
   scans: unknown[]
   thumbRequests: string[][]
+  previewRequests: string[]
+  copied: string[]
   opened: string[]
   panes: string[]
   toasts: string[]
@@ -41,6 +43,8 @@ function engine(on: On, overrides: Partial<World> = {}): World {
     settle: async () => {},
     scans: [],
     thumbRequests: [],
+    previewRequests: [],
+    copied: [],
     opened: [],
     panes: [],
     toasts: [],
@@ -81,6 +85,15 @@ function engine(on: On, overrides: Partial<World> = {}): World {
       w.thumbRequests.push(input)
       if (w.thumbsError) return ran(1, '', w.thumbsError)
       return ran(0, JSON.stringify(Object.fromEntries(input.map((path: string) => [path, 'C:\\Local\\thumb.jpg']))))
+    }
+    if (mode === 'preview') {
+      w.previewRequests.push(input)
+      const strips = [0, 1].map(index => ({ path: `C:\Local\strip-${index}.jpg`, height: 320 }))
+      return ran(0, JSON.stringify({ width: 1600, height: 640, strips }))
+    }
+    if (mode === 'copy') {
+      w.copied.push(input)
+      return ran(0, '')
     }
     w.opened.push(e.argv.join(' '))
     return ran(1, '')
@@ -211,14 +224,14 @@ describe('image-library', () => {
     const ui = await pane($, 'desktop')
     await ui.select({ key: 'filter', value: `session:${OTHER}` })
     expect(await openKeys(ui)).toEqual([`open:${IMAGES[2]!.path}`])
-    await ui.press({ key: `open:${IMAGES[2]!.path}` })
+    await ui.press({ key: `app:${IMAGES[2]!.path}` })
     expect(w.opened).toEqual([`explorer.exe ${IMAGES[2]!.path}`])
   })
 
   test('a file deleted after the scan is not opened, a toast says so', async ($, on) => {
     const w = engine(on, { missingFiles: [IMAGES[1]!.path] })
     await openLibrary($)
-    await (await pane($, 'desktop')).press({ key: `open:${IMAGES[1]!.path}` })
+    await (await pane($, 'desktop')).press({ key: `app:${IMAGES[1]!.path}` })
     expect(w.opened).toEqual([])
     expect(w.toasts).toEqual([`Файла уже нет: ${IMAGES[1]!.path}`])
   })
@@ -275,6 +288,45 @@ describe('image-library', () => {
       .filter(b => /^top:(page|gap)/.test(String(b.props.key)))
       .map(b => b.props.label)
     expect(labels).toEqual(['1', '2', '3', '4', '5', '6', '7', '10'])
+  })
+
+  test('🔍 opens the picture over the whole pane in strips; ‹ › step through the list, ← goes back', async ($, on) => {
+    const w = engine(on)
+    await openLibrary($)
+    const ui = await pane($, 'desktop')
+    await ui.press({ key: `view:${IMAGES[0]!.path}` })
+    expect(w.previewRequests).toEqual([IMAGES[0]!.path])
+    const strips = await ui.findAll({ type: 'Svg' })
+    expect(strips.map(svg => svg.props.alt)).toEqual(['concept.png (1/2)', 'concept.png (2/2)'])
+    expect(String(strips[0]!.props.source)).toContain('width="1600" height="320"')
+    expect(await ui.find({ type: 'Text', text: /1 \/ 3/ })).toBeDefined()
+    expect(await openKeys(ui)).toEqual([])
+
+    await ui.press({ key: 'viewer:next' })
+    // logo.svg мал: показывается сам файл, полосы для него не делаются.
+    expect(w.previewRequests).toEqual([IMAGES[0]!.path])
+    expect((await ui.findAll({ type: 'Svg' })).map(svg => svg.props.alt)).toEqual(['logo.svg'])
+    await ui.press({ key: 'viewer:next' })
+    expect(await ui.find({ type: 'Text', text: /Предпросмотр этого файла недоступен/ })).toBeDefined()
+    await ui.press({ key: 'viewer:next' })
+    expect(await ui.find({ type: 'Text', text: /3 \/ 3/ })).toBeDefined()
+
+    await ui.press({ key: 'viewer:back' })
+    expect(await openKeys(ui)).toHaveLength(3)
+  })
+
+  test('the name opens the viewer too; 📋 copies the full system path, not the picture data', async ($, on) => {
+    const w = engine(on)
+    await openLibrary($)
+    const ui = await pane($, 'desktop')
+    await ui.press({ key: `copy:${IMAGES[1]!.path}` })
+    expect(w.copied).toEqual([IMAGES[1]!.path])
+    expect(w.toasts).toEqual([`Путь скопирован: ${IMAGES[1]!.path}`])
+
+    await ui.press({ key: `open:${IMAGES[0]!.path}` })
+    await ui.press({ key: 'viewer:copy' })
+    expect(w.copied).toEqual([IMAGES[1]!.path, IMAGES[0]!.path])
+    expect(w.opened).toEqual([])
   })
 
   test('sorting flips to oldest first', async ($, on) => {

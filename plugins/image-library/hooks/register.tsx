@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderElement } from 'claude-code'
+import type { Elements, EngineInterface, Register, RenderElement, RenderSurface } from 'claude-code'
 
-import type { Filter, LibraryImage, Source } from '../types'
+import type { Filter, LibraryImage, Preview, Source } from '../types'
 
 const PANE = 'image-library'
 const TITLE = 'Библиотека'
@@ -12,6 +12,9 @@ const THUMB_PX = 192
 // его base64 (×4/3) с обёрткой укладывается в 131072 символа source у Svg.
 const EMBED_LIMIT = 90_000
 const SCRIPT_TIMEOUT_MS = 120_000
+const PREVIEW_WIDTH = 1600
+// Байт на полосу просмотра: её base64 с обёрткой укладывается в source одной Svg.
+const STRIP_BYTES = 95_000
 // Миниатюры делает System.Drawing: он читает эти форматы, а webp и svg нет.
 const THUMBABLE = ['png', 'jpg', 'jpeg', 'gif']
 const MIME: Record<string, string> = {
@@ -31,6 +34,8 @@ const filter = atom({ plugin: 'image-library', key: 'filter' } as const, 'all')
 const isOldestFirst = atom({ plugin: 'image-library', key: 'isOldestFirst' } as const, false)
 const page = atom({ plugin: 'image-library', key: 'page' } as const, 0)
 const thumbs = atom({ plugin: 'image-library', key: 'thumbs' } as const, {})
+const viewing = atom({ plugin: 'image-library', key: 'viewing' } as const, null)
+const previews = atom({ plugin: 'image-library', key: 'previews' } as const, {})
 
 type Root = { source: Source; session: string | null; path: string; skipBuildDirs: boolean }
 type Settings = { includeCodex: boolean; scanLimit: number }
@@ -190,7 +195,9 @@ async function scan($: EngineInterface, settings: Settings, cacheDir: string): P
     await update($, images, () => found)
     // Список мог сократиться: номер страницы остаётся в его пределах.
     await update($, page, current => Math.min(current, pageCount(found.length) - 1))
-    await update($, thumbs, current => Object.fromEntries(Object.entries(current).filter(([key]) => present.has(key))))
+    const isPresent = ([key]: [string, unknown]) => present.has(key)
+    await update($, thumbs, current => Object.fromEntries(Object.entries(current).filter(isPresent)))
+    await update($, previews, current => Object.fromEntries(Object.entries(current).filter(isPresent)))
     await update($, error, () => '')
     await update($, status, () => 'idle')
   } catch (failure) {
@@ -210,6 +217,52 @@ async function openFile($: EngineInterface, path: string): Promise<void> {
   }
   // explorer.exe открывает файл приложением по умолчанию; код выхода у него всегда 1.
   await $.process.run(['explorer.exe', path], { timeoutMs: 10_000 }).catch(() => $.ui.toast(`Не удалось открыть ${path}`))
+}
+
+async function copyPath($: EngineInterface, path: string, surface: RenderSurface): Promise<void> {
+  // Скрипт кладёт путь в буфер Windows; $.ui.copy на desktop в системный буфер не пишет.
+  const isCopied =
+    (await runScript($, ['-Mode', 'copy'], path).then(() => true, () => false)) ||
+    (await $.ui.copy({ text: path, surface }).then(copied => copied.isCopied, () => false))
+  $.ui.toast(isCopied ? `Путь скопирован: ${path}` : `Не удалось скопировать: ${path}`)
+}
+
+async function ensurePreview($: EngineInterface, cacheDir: string, image: LibraryImage): Promise<void> {
+  const key = thumbKey(image)
+  if (key in (await read($, previews)) || !THUMBABLE.includes(extensionOf(image.path))) return
+
+  const args = ['-Mode', 'preview', '-CacheDir', cacheDir, '-Size', String(PREVIEW_WIDTH), '-StripBytes', String(STRIP_BYTES)]
+  const made = await runScript($, args, image.path).then(
+    out => parseJson<Preview | null>(out, null),
+    () => null,
+  )
+  await update($, previews, current => ({ ...current, [key]: made }))
+}
+
+async function openViewer($: EngineInterface, cacheDir: string, image: LibraryImage): Promise<void> {
+  await update($, viewing, () => image.path)
+  await $.ui.scroll({ to: 'start', in: PANE }).catch(() => undefined)
+  await ensurePreview($, cacheDir, image)
+}
+
+// Шаг по списку от картинки, открытой сейчас (а не на момент рисования).
+async function stepViewer($: EngineInterface, cacheDir: string, list: readonly LibraryImage[], delta: number): Promise<void> {
+  let target: LibraryImage | undefined
+  await update($, viewing, current => {
+    const index = list.findIndex(image => image.path === current)
+    target = list[Math.min(Math.max(0, index + delta), list.length - 1)]
+    return target?.path ?? current
+  })
+  if (target) await ensurePreview($, cacheDir, target)
+}
+
+async function closeViewer($: EngineInterface): Promise<void> {
+  await update($, viewing, () => null)
+}
+
+function sizeText(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`
+  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
 }
 
 function pad(value: number): string {
@@ -273,6 +326,41 @@ async function pictureOf(
   if (!mime || image.size > EMBED_LIMIT) return null
   const base64 = await base64Of($, image.path, thumbKey(image))
   return base64 ? { mime, base64 } : null
+}
+
+// Тело просмотра: полосы, мелкий исходник целиком или подсказка.
+async function viewerPicture(
+  $: EngineInterface,
+  { Box, Svg, Text }: Pick<Elements['desktop'], 'Box' | 'Svg' | 'Text'>,
+  image: LibraryImage,
+  preview: Preview | null | undefined,
+): Promise<RenderElement> {
+  if (preview) {
+    // Полосы по ~100 КБ не кэшируются: просмотр рисуется редко, а память нужнее миниатюрам.
+    const strips = await Promise.all(
+      preview.strips.map(strip => $.fs.read(strip.path, { as: 'bytes' }).then(read => read.base64, () => null)),
+    )
+    if (strips.every(strip => strip !== null)) {
+      return (
+        <Box key="viewer-image" flexDirection="column">
+          {preview.strips.map((strip, index) => (
+            <Svg
+              source={svgOf('image/jpeg', strips[index] ?? '', preview.width, strip.height)}
+              alt={`${image.name} (${index + 1}/${strips.length})`}
+            />
+          ))}
+        </Box>
+      )
+    }
+  }
+
+  if (preview === undefined && THUMBABLE.includes(extensionOf(image.path))) {
+    return <Text dimColor>Готовлю просмотр…</Text>
+  }
+
+  const picture = await pictureOf($, image, null)
+  if (picture) return <Svg source={svgOf(picture.mime, picture.base64, 800, 600)} alt={image.name} />
+  return <Text dimColor>Предпросмотр этого файла недоступен — «↗ Открыть в приложении».</Text>
 }
 
 function filterOptions(list: readonly LibraryImage[], currentSession: string) {
@@ -382,6 +470,35 @@ export const register: Register = (on, options) => {
     const pages = pageCount(chosen.length)
     const openPage = (move: (current: number) => number) => goToPage($, cacheDir, chosen.length, move)
 
+    // Просмотр одной картинки на всю панель; листается по текущему фильтру и сортировке.
+    const viewingPath = await read($, viewing)
+    const viewed = viewingPath === null ? undefined : all.find(image => image.path === viewingPath)
+    if (viewed && 'Svg' in ui) {
+      const inChosen = chosen.findIndex(image => image.path === viewed.path)
+      const list = inChosen >= 0 ? chosen : [viewed]
+      const position = Math.max(0, inChosen)
+      const picture = await viewerPicture($, ui, viewed, (await read($, previews))[thumbKey(viewed)])
+
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Box key="viewer-bar" flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
+            <Button key="viewer:back" label="← Галерея" onPress={() => closeViewer($)} />
+            <Button key="viewer:prev" label="‹" onPress={() => stepViewer($, cacheDir, list, -1)} />
+            <Text>
+              {position + 1} / {list.length}
+            </Text>
+            <Button key="viewer:next" label="›" onPress={() => stepViewer($, cacheDir, list, 1)} />
+            <Button key="viewer:copy" label="📋 Копировать путь" onPress={press => copyPath($, viewed.path, press.surface)} />
+            <Button key="viewer:app" label="↗ Открыть в приложении" onPress={() => openFile($, viewed.path)} />
+          </Box>
+          <Text dimColor>
+            {viewed.path} · {dateText(viewed.mtimeMs)} · {sizeText(viewed.size)}
+          </Text>
+          {picture}
+        </Box>
+      )
+    }
+
     // Переключатель страниц: ‹ 1 … 4 5 [6] 7 8 … 40 ›; рисуется над сеткой и под ней.
     const pager = (place: string) =>
       pages > 1 && (
@@ -448,19 +565,36 @@ export const register: Register = (on, options) => {
 
       const { Svg } = ui
       const picture = pictures[index]
+      const view = () => openViewer($, cacheDir, image)
+      // Нажатие принимает только Button, не сама Svg: «🔍» лежит поверх угла картинки.
       tiles.push(
         <Box key={`tile:${image.path}`} flexDirection="column" width={26}>
-          {picture ? (
-            <Svg source={svgOf(picture.mime, picture.base64, 176, 132)} alt={image.name} width={176} height={132} />
-          ) : (
-            <Box height={6} borderStyle="round" justifyContent="center" alignItems="center">
-              <Text dimColor>{extensionOf(image.path).toUpperCase()}</Text>
+          <Box key={`frame:${image.path}`} position="relative">
+            {picture ? (
+              <Svg source={svgOf(picture.mime, picture.base64, 176, 132)} alt={image.name} width={176} height={132} />
+            ) : (
+              <Box height={6} width={24} borderStyle="round" justifyContent="center" alignItems="center">
+                <Text dimColor>{extensionOf(image.path).toUpperCase()}</Text>
+              </Box>
+            )}
+            <Box position="absolute" top={0} right={0}>
+              <Button key={`view:${image.path}`} plain label="🔍" onPress={view} />
             </Box>
-          )}
-          <Button key={`open:${image.path}`} plain onPress={open}>
+          </Box>
+          <Button key={`open:${image.path}`} plain onPress={view}>
             {shortName(image.name)}
           </Button>
           <Text dimColor>{caption}</Text>
+          <Box flexDirection="row" gap={1}>
+            <Button
+              key={`copy:${image.path}`}
+              plain
+              dimColor
+              label="📋 путь"
+              onPress={press => copyPath($, image.path, press.surface)}
+            />
+            <Button key={`app:${image.path}`} plain dimColor label="↗ открыть" onPress={open} />
+          </Box>
         </Box>,
       )
     }

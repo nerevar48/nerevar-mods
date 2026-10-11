@@ -1,13 +1,18 @@
-# Сканер и генератор миниатюр для мода image-library.
-#   -Mode scan   : JSON-массив найденных изображений из корней, переданных в stdin
-#                  ([{ source, session, path, skipBuildDirs }]), в stdout.
-#   -Mode thumbs : JSON-массив путей в stdin; для каждого создаёт JPEG-миниатюру
-#                  в -CacheDir (если её ещё нет) и печатает { path: thumbPath|null }.
+# Сканер, миниатюры и просмотр для мода image-library.
+#   -Mode scan    : JSON-массив найденных изображений из корней, переданных в stdin
+#                   ([{ source, session, path, skipBuildDirs }]), в stdout.
+#   -Mode thumbs  : JSON-массив путей в stdin; для каждого создаёт JPEG-миниатюру
+#                   в -CacheDir (если её ещё нет) и печатает { path: thumbPath|null }.
+#   -Mode preview : JSON-строка пути в stdin; уменьшает картинку до ширины -Size и режет
+#                   на JPEG-полосы не больше -StripBytes каждая (столько вмещает одна Svg).
+#                   Печатает { width, height, strips: [{ path, height }] } или null.
+#   -Mode copy    : JSON-строка в stdin кладётся в буфер обмена.
 param(
-  [Parameter(Mandatory)] [ValidateSet('scan', 'thumbs')] [string] $Mode,
+  [Parameter(Mandatory)] [ValidateSet('scan', 'thumbs', 'preview', 'copy')] [string] $Mode,
   [string] $CacheDir,
   [int] $Size = 192,
-  [int] $Limit = 3000
+  [int] $Limit = 3000,
+  [int] $StripBytes = 95000
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +24,11 @@ try {
 } catch {}
 $inputText = [Console]::In.ReadToEnd()
 $request = if ($inputText.Trim()) { ConvertFrom-Json $inputText } else { @() }
+
+if ($Mode -eq 'copy') {
+  Set-Clipboard -Value ([string] $request)
+  exit 0
+}
 
 $extensions = @('.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg')
 # Папки сборки, зависимостей и кэшей проекта: в них картинки не создаются руками или агентом.
@@ -72,41 +82,101 @@ Add-Type -AssemblyName System.Drawing
 [IO.Directory]::CreateDirectory($CacheDir) | Out-Null
 $md5 = [Security.Cryptography.MD5]::Create()
 $jpeg = [Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
-$quality = [Drawing.Imaging.EncoderParameters]::new(1)
-$quality.Param[0] = [Drawing.Imaging.EncoderParameter]::new([Drawing.Imaging.Encoder]::Quality, [long]80)
-$result = [ordered]@{}
-try {
 
-foreach ($path in $request) {
-  $result[$path] = $null
+function Get-CacheName([IO.FileInfo] $info, [string] $kind) {
+  $key = "$($info.FullName)|$($info.LastWriteTimeUtc.Ticks)|$kind"
+  -join ($md5.ComputeHash([Text.Encoding]::UTF8.GetBytes($key)) | ForEach-Object { $_.ToString('x2') })
+}
+
+function Get-JpegBytes([Drawing.Image] $image, [long] $quality) {
+  $parameters = [Drawing.Imaging.EncoderParameters]::new(1)
+  $parameters.Param[0] = [Drawing.Imaging.EncoderParameter]::new([Drawing.Imaging.Encoder]::Quality, $quality)
+  $stream = [IO.MemoryStream]::new()
   try {
-    $info = [IO.FileInfo]::new($path)
-    $key = "$($info.FullName)|$($info.LastWriteTimeUtc.Ticks)|$Size"
-    $hash = -join ($md5.ComputeHash([Text.Encoding]::UTF8.GetBytes($key)) | ForEach-Object { $_.ToString('x2') })
-    $thumb = Join-Path $CacheDir "$hash.jpg"
-    if (-not [IO.File]::Exists($thumb)) {
-      $image = [Drawing.Image]::FromFile($info.FullName)
-      try {
-        $scale = [Math]::Min(1.0, [Math]::Min($Size / $image.Width, $Size / $image.Height))
-        $width = [Math]::Max(1, [int]($image.Width * $scale))
-        $height = [Math]::Max(1, [int]($image.Height * $scale))
-        $bitmap = [Drawing.Bitmap]::new($width, $height)
-        try {
-          $graphics = [Drawing.Graphics]::FromImage($bitmap)
-          try {
-            $graphics.Clear([Drawing.Color]::White)
-            $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-            $graphics.DrawImage($image, 0, 0, $width, $height)
-          } finally { $graphics.Dispose() }
-          $bitmap.Save($thumb, $jpeg, $quality)
-        } finally { $bitmap.Dispose() }
-      } finally { $image.Dispose() }
-    }
-    $result[$path] = $thumb
-  } catch {
-    # Формат, который System.Drawing не читает (webp, svg), или битый файл: без миниатюры.
+    $image.Save($stream, $jpeg, $parameters)
+    , $stream.ToArray()
+  } finally {
+    $stream.Dispose()
+    $parameters.Dispose()
   }
 }
 
+# Копия картинки, вписанная в $maxWidth × $maxHeight (не больше исходника), на белом фоне.
+function New-Scaled([Drawing.Image] $image, [double] $maxWidth, [double] $maxHeight) {
+  $scale = [Math]::Min(1.0, [Math]::Min($maxWidth / $image.Width, $maxHeight / $image.Height))
+  $bitmap = [Drawing.Bitmap]::new([Math]::Max(1, [int]($image.Width * $scale)), [Math]::Max(1, [int]($image.Height * $scale)))
+  $graphics = [Drawing.Graphics]::FromImage($bitmap)
+  try {
+    $graphics.Clear([Drawing.Color]::White)
+    $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.DrawImage($image, 0, 0, $bitmap.Width, $bitmap.Height)
+  } finally { $graphics.Dispose() }
+  $bitmap
+}
+
+try {
+  if ($Mode -eq 'thumbs') {
+    $result = [ordered]@{}
+    foreach ($path in $request) {
+      $result[$path] = $null
+      try {
+        $info = [IO.FileInfo]::new($path)
+        $thumb = Join-Path $CacheDir "$(Get-CacheName $info "thumb$Size").jpg"
+        if (-not [IO.File]::Exists($thumb)) {
+          $image = [Drawing.Image]::FromFile($info.FullName)
+          try {
+            $scaled = New-Scaled $image $Size $Size
+            try { [IO.File]::WriteAllBytes($thumb, (Get-JpegBytes $scaled 80)) } finally { $scaled.Dispose() }
+          } finally { $image.Dispose() }
+        }
+        $result[$path] = $thumb
+      } catch {
+        # Формат, который System.Drawing не читает (webp, svg), или битый файл: без миниатюры.
+      }
+    }
+    ConvertTo-Json -InputObject $result -Compress
+    exit 0
+  }
+
+  # preview
+  $info = [IO.FileInfo]::new([string] $request)
+  $name = Get-CacheName $info "preview$Size|$StripBytes"
+  $manifest = Join-Path $CacheDir "$name.json"
+  if ([IO.File]::Exists($manifest)) {
+    [IO.File]::ReadAllText($manifest)
+    exit 0
+  }
+
+  $image = [Drawing.Image]::FromFile($info.FullName)
+  try {
+    $scaled = New-Scaled $image $Size ([double]::MaxValue)
+    try {
+      $strips = [Collections.Generic.List[object]]::new()
+      $stripHeight = 320
+      for ($top = 0; $top -lt $scaled.Height; $top += $stripHeight) {
+        $height = [Math]::Min($stripHeight, $scaled.Height - $top)
+        $strip = $scaled.Clone([Drawing.Rectangle]::new(0, $top, $scaled.Width, $height), $scaled.PixelFormat)
+        try {
+          # Качество снижается, пока полоса не уложится в лимит одной Svg.
+          $quality = 85
+          $bytes = Get-JpegBytes $strip $quality
+          while ($bytes.Length -gt $StripBytes -and $quality -gt 25) {
+            $quality -= 15
+            $bytes = Get-JpegBytes $strip $quality
+          }
+        } finally { $strip.Dispose() }
+        if ($bytes.Length -gt $StripBytes) { throw "полоса $top не уложилась в $StripBytes байт" }
+        $stripPath = Join-Path $CacheDir "$name-$($strips.Count).jpg"
+        [IO.File]::WriteAllBytes($stripPath, $bytes)
+        $strips.Add([pscustomobject]@{ path = $stripPath; height = $height })
+      }
+      $json = ConvertTo-Json -Compress -Depth 3 -InputObject ([pscustomobject]@{
+          width  = $scaled.Width
+          height = $scaled.Height
+          strips = $strips.ToArray()
+        })
+    } finally { $scaled.Dispose() }
+  } finally { $image.Dispose() }
+  [IO.File]::WriteAllText($manifest, $json)
+  $json
 } finally { $md5.Dispose() }
-ConvertTo-Json -InputObject $result -Compress
