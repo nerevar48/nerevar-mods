@@ -74,8 +74,8 @@ test('tasks from TaskCreate and TaskUpdate count toward the bar', async ($, on) 
   await expectShown(ui, 'terminal', /Doing two/, /1\/2/, /50%/)
 })
 
-test('every prompt carries the rule for the model', async ($, on) => {
+test("prompts in the person's words carry the rule", async ($, on) => {
   on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
-  const entered = await $.prompt.submit({ text: 'Fix the login flow' })
+  const entered = await $.prompt.submit({ text: 'Fix the login flow', asUser: true })
   expect(entered.context?.some(c => c.includes('mcp__session-progress__progress'))).toBe(true)
 })

@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, PromptOrigin, Register } from 'claude-code'
 
 import type { Plan, TaskItem } from '../types'
 
@@ -16,6 +16,13 @@ const RULE =
   'and once more with finished: true when the task is done. ' +
   'A routine-looking task still gets the bar; only a direct answer or a single edit goes without it. ' +
   'When TodoWrite or TaskCreate/TaskUpdate already track the work, the bar follows that list instead.'
+
+// Prompts that report on work rather than ask for it. A denylist: the desktop's
+// own prompts may arrive unstamped, and an engine without origins stamps none.
+const REPORTS = new Set(['task-notification', 'peer-send-message', 'observer', 'observer-activity'])
+
+const asksForWork = (origin: PromptOrigin | undefined): boolean =>
+  !origin || (origin.kind === 'plugin' ? origin.asUser === true : !REPORTS.has(origin.kind))
 
 const ACCENT = '#8f8cf4'
 const DONE = '#5fbf8f'
@@ -264,7 +271,7 @@ export const register: Register = (on, options) => {
       // Not deferred: the model reads this description in every session, so it carries the rule.
       description:
         'Shows the user how far along the current task is, as a progress bar above the prompt. ' +
-        'For a task of 3 or more distinct steps, call it once the plan is clear (title, steps), ' +
+        'When a request takes more than a couple of tool calls, call it once the plan is clear (title, steps), ' +
         'again as each step finishes (done; current names the step now in progress), and once at the end with finished: true. ' +
         'If you track the work with TodoWrite or TaskCreate/TaskUpdate, the bar follows that list and this tool is not needed. ' +
         'Skip it for quick answers and single edits. Fields left out keep their previous value; a new title starts a new plan. ' +
@@ -285,7 +292,9 @@ export const register: Register = (on, options) => {
 
   // The tool description alone reads as optional, and the model skips it: each
   // prompt carries the rule beside it, where the model plans the work.
-  on('prompt.submit', ($, e, next) => next({ ...e, context: [...(e.context ?? []), RULE] }))
+  on('prompt.submit', ($, e, next) =>
+    asksForWork(e.origin) ? next({ ...e, context: [...(e.context ?? []), RULE] }) : next(e),
+  )
 
   // A new main-loop turn hides a finished bar; the next plan starts clean.
   on('turn.start', async ($, e, next) => {
