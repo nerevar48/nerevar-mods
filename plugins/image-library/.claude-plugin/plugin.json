@@ -1,0 +1,21 @@
+{
+  "name": "image-library",
+  "version": "0.1.0",
+  "author": { "name": "nerevar48" },
+  "description": "Панель «Библиотека»: галерея изображений проекта, сессий Claude Code и Codex с миниатюрами, фильтром и сортировкой по дате",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "includeCodex": {
+      "type": "boolean",
+      "title": "Codex images",
+      "description": "Show images Codex generated (~/.codex/generated_images)",
+      "default": true
+    },
+    "scanLimit": {
+      "type": "number",
+      "title": "Scan limit",
+      "description": "Most images listed, newest first",
+      "default": 3000
+    }
+  }
+}
