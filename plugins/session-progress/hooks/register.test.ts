@@ -39,6 +39,8 @@ test('the progress tool draws steps, advances current and finishes', async ($, o
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
     await expectShown(ui, surface, /Fix login/, /Test/, /2\/4/, /50%/)
+    // Over core's own drawing there is no rule.
+    expect((await ui.findAll({ type: 'Text' })).some(t => t.text.startsWith('─'))).toBe(false)
     await ui.unmount()
   }
   await $.tool.call({ tool: 'mcp__session-progress__progress', finished: true })
