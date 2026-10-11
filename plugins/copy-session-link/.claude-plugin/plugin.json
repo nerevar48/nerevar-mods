@@ -1,0 +1,6 @@
+{
+  "name": "copy-session-link",
+  "version": "0.1.0",
+  "author": { "name": "nerevar48" },
+  "description": "Кнопка в футере поля ввода Claude Code Desktop, копирующая в буфер обмена ссылку на текущую сессию"
+}
