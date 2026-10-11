@@ -1,0 +1,22 @@
+{
+  "name": "pr-merge",
+  "version": "0.1.0",
+  "author": { "name": "nerevar48" },
+  "description": "Band above the prompt with the current branch's GitHub PR and a Merge button (via gh)",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mergeMethod": {
+      "type": "string",
+      "title": "Merge method",
+      "description": "How gh pr merge merges the PR",
+      "default": "squash",
+      "options": ["squash", "merge", "rebase"]
+    },
+    "deleteBranch": {
+      "type": "boolean",
+      "title": "Delete branch",
+      "description": "Pass --delete-branch to gh pr merge (also switches the local checkout to the base branch)",
+      "default": false
+    }
+  }
+}

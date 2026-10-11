@@ -1,0 +1,28 @@
+{
+  "name": "nerevar-mods",
+  "owner": { "name": "nerevar48", "url": "https://github.com/nerevar48" },
+  "metadata": { "description": "nerevar48's Claude Code mods." },
+  "plugins": [
+    {
+      "name": "turn-stats",
+      "source": "./plugins/turn-stats",
+      "description": "Полоса над полем ввода со статистикой сессии: время работы, токены (включая субагентов) и квота",
+      "version": "0.2.0",
+      "category": "mod"
+    },
+    {
+      "name": "pr-merge",
+      "source": "./plugins/pr-merge",
+      "description": "Band above the prompt with the current branch's GitHub PR and a Merge button (via gh)",
+      "version": "0.1.0",
+      "category": "mod"
+    },
+    {
+      "name": "session-progress",
+      "source": "./plugins/session-progress",
+      "description": "Progress bar above the prompt for the current session's task: follows the todo list and the plan the model reports through its progress tool.",
+      "version": "0.1.0",
+      "category": "mod"
+    }
+  ]
+}

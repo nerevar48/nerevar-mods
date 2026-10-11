@@ -1,0 +1,7 @@
+{
+  "name": "turn-stats",
+  "version": "0.2.0",
+  "author": { "name": "nerevar48" },
+  "description": "Полоса над полем ввода со статистикой сессии: время работы, токены (включая субагентов) и квота",
+  "types": "./types/index.d.ts"
+}

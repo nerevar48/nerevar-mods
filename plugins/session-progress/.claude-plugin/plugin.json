@@ -1,0 +1,16 @@
+{
+  "name": "session-progress",
+  "version": "0.1.0",
+  "author": { "name": "nerevar48" },
+  "description": "Progress bar above the prompt for the current session's task: follows the todo list (TodoWrite, TaskCreate/TaskUpdate) and the plan the model reports through its progress tool.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "language": {
+      "type": "string",
+      "title": "Bar language",
+      "description": "auto follows Claude Code's language setting, then the system locale",
+      "default": "auto",
+      "options": ["auto", "en", "ru"]
+    }
+  }
+}
