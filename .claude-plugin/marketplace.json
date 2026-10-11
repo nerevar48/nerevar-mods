@@ -21,7 +21,7 @@
       "name": "session-progress",
       "source": "./plugins/session-progress",
       "description": "Progress bar above the prompt for the current session's task: follows the todo list and the plan the model reports through its progress tool.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "category": "mod"
     },
     {

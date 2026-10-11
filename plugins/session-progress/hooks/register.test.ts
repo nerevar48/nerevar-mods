@@ -73,3 +73,9 @@ test('tasks from TaskCreate and TaskUpdate count toward the bar', async ($, on) 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await expectShown(ui, 'terminal', /Doing two/, /1\/2/, /50%/)
 })
+
+test('every prompt carries the rule for the model', async ($, on) => {
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
+  const entered = await $.prompt.submit({ text: 'Fix the login flow' })
+  expect(entered.context?.some(c => c.includes('mcp__session-progress__progress'))).toBe(true)
+})

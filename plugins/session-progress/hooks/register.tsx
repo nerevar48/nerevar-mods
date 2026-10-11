@@ -7,6 +7,16 @@ const plan = atom({ plugin: 'session-progress', key: 'plan' } as const, null)
 const tasks = atom({ plugin: 'session-progress', key: 'tasks' } as const, [])
 
 const TOOL = 'mcp__session-progress__progress'
+
+const RULE =
+  '# Progress bar\n' +
+  `The user follows the task through a progress bar above the prompt, drawn by the \`${TOOL}\` tool. ` +
+  'When a request takes more than a couple of tool calls (investigating, editing several files, running checks, committing), ' +
+  'call it before the work starts, with a short title and the planned steps; call it again as each step finishes, ' +
+  'and once more with finished: true when the task is done. ' +
+  'A routine-looking task still gets the bar; only a direct answer or a single edit goes without it. ' +
+  'When TodoWrite or TaskCreate/TaskUpdate already track the work, the bar follows that list instead.'
+
 const ACCENT = '#8f8cf4'
 const DONE = '#5fbf8f'
 
@@ -272,6 +282,10 @@ export const register: Register = (on, options) => {
     })
     return started
   })
+
+  // The tool description alone reads as optional, and the model skips it: each
+  // prompt carries the rule beside it, where the model plans the work.
+  on('prompt.submit', ($, e, next) => next({ ...e, context: [...(e.context ?? []), RULE] }))
 
   // A new main-loop turn hides a finished bar; the next plan starts clean.
   on('turn.start', async ($, e, next) => {
