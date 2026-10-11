@@ -209,6 +209,8 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
+    // The band is shared: draw our rows above whatever the plugins beneath draw.
+    const below = await next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const step = await read($, phase)
     // During a running turn the resolving prompt would queue behind it, so no merge starts then.
@@ -251,6 +253,7 @@ export const register: Register = (on, options) => {
             {step === 'idle' && <Button key="refresh" label="Обновить" onPress={pressed} />}
           </Box>
         </Box>
+        {below}
       </Box>
     )
   })

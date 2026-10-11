@@ -362,6 +362,8 @@ export const register: Register = (on, options) => {
     const p = await read($, plan)
     if (p === null || e.props.hasSurvey) return next(e)
 
+    // The band is shared: draw our row above whatever the plugins beneath draw.
+    const below = await next(e)
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
     const percent = `${Math.round(ratio(p) * 100)}%`
@@ -373,9 +375,12 @@ export const register: Register = (on, options) => {
       const width = Math.max(180, Math.min(1600, (e.props.bodyColumns || 100) * 8 - 48))
       const alt = `${p.title}${p.current ? ` · ${p.current}` : ''}: ${label(p)}, ${percent}`
       return (
-        <Box flexDirection="row" alignItems="center" gap={1}>
-          <Svg source={rowSvg(p, width, e.props.isWorking)} alt={alt} width={width} height={H} />
-          {dismiss}
+        <Box flexDirection="column">
+          <Box flexDirection="row" alignItems="center" gap={1}>
+            <Svg source={rowSvg(p, width, e.props.isWorking)} alt={alt} width={width} height={H} />
+            {dismiss}
+          </Box>
+          {below}
         </Box>
       )
     }
@@ -386,18 +391,21 @@ export const register: Register = (on, options) => {
     const width = Math.max(6, Math.min(40, cols - titleW - 24))
     const color = p.isFinished ? DONE : ACCENT
     return (
-      <Box flexDirection="row" gap={2}>
-        <Box width={titleW} flexShrink={0}>
-          <Text color={color}>● </Text>
-          <Text wrap="truncate-end">
-            {p.title}
-            {p.current ? <Text dimColor> · {p.current}</Text> : ''}
-          </Text>
+      <Box flexDirection="column">
+        <Box flexDirection="row" gap={2}>
+          <Box width={titleW} flexShrink={0}>
+            <Text color={color}>● </Text>
+            <Text wrap="truncate-end">
+              {p.title}
+              {p.current ? <Text dimColor> · {p.current}</Text> : ''}
+            </Text>
+          </Box>
+          <Text color={color}>{barText(p, width)}</Text>
+          <Text bold>{label(p)}</Text>
+          <Text dimColor>{percent}</Text>
+          {dismiss}
         </Box>
-        <Text color={color}>{barText(p, width)}</Text>
-        <Text bold>{label(p)}</Text>
-        <Text dimColor>{percent}</Text>
-        {dismiss}
+        {below}
       </Box>
     )
   })
