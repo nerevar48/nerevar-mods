@@ -5,7 +5,7 @@ import type { On, RenderElement, SessionRateLimit, TurnUsage } from 'claude-code
 const SESSION = 'session-a'
 const SURFACES = ['terminal', 'desktop'] as const
 
-type World = { limits: SessionRateLimit[]; below?: string }
+type World = { limits: SessionRateLimit[]; below?: string | RenderElement }
 
 // The engine beneath the plugin: a session id, usage figures the test moves,
 // a mocked clock, a store the test can read, and bottoms for passed-on events.
@@ -37,7 +37,8 @@ function engine(on: On, world: World, store = new Map<string, unknown>()) {
   // What the plugins beneath draw: core's own drawing, or a row of text (another band).
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
-    return (world.below === undefined ? { type: 'engine', ref: 0 } : h(Text, {}, world.below)) as RenderElement
+    if (world.below === undefined) return { type: 'engine', ref: 0 }
+    return (typeof world.below === 'string' ? h(Text, {}, world.below) : world.below) as RenderElement
   })
   return clock
 }
@@ -147,6 +148,18 @@ describe('turn-stats', () => {
       await turn($, 't1', 2_000)
       const text = await shown(await band($, surface))
       expect(text).toBe('⏱ 2с (ход 2с) | PR #40')
+    })
+
+    test(`${surface}: the stats go above the PR and the progress of the mods beneath`, async ($, on) => {
+      const section = (rank: number, text: string) => ({ type: 'Box', props: { key: `band-section:${rank}` }, children: [text] })
+      const below = { type: 'Box', props: { key: 'band-sections', flexDirection: 'column' }, children: [
+        section(20, 'PR #40'), section(30, '● Fix login'), { type: 'engine', ref: 0 },
+      ] } as RenderElement
+      engine(on, { limits: [], below })
+      await turn($, 't1', 2_000)
+      const boxes = await (await band($, surface)).findAll({ type: 'Box' })
+      const keys = boxes.map(b => String(b.props.key)).filter(k => k.startsWith('band-section:'))
+      expect(keys).toEqual(['band-section:10', 'band-section:20', 'band-section:30'])
     })
   }
 

@@ -113,7 +113,7 @@ describe('pr-merge', () => {
     test(`${surface}: whatever the chain order, the time goes above the PR and the progress below`, async ($, on) => {
       const section = (rank: number, text: string) => ({ type: 'Box', props: { key: `band-section:${rank}` }, children: [text] })
       const below = { type: 'Box', props: { key: 'band-sections', flexDirection: 'column' }, children: [
-        section(10, '⏱ 2с'), section(30, '● Fix login'), { type: 'engine', ref: 0 },
+        section(30, '● Fix login'), section(10, '⏱ 2с'), { type: 'engine', ref: 0 },
       ] } as RenderElement
       engine(on, world({ below }))
       await $.session.start({ cwd: '.' })

@@ -16,7 +16,8 @@ const RANK = 30
 
 function rankOf(node: RenderNode): number {
   const key = typeof node === 'object' && node.type === 'Box' ? node.props?.key : undefined
-  return typeof key === 'string' && key.startsWith(SECTION) ? Number(key.slice(SECTION.length)) : Number.MAX_SAFE_INTEGER
+  const rank = typeof key === 'string' && key.startsWith(SECTION) ? Number(key.slice(SECTION.length)) : NaN
+  return Number.isFinite(rank) ? rank : Number.MAX_SAFE_INTEGER
 }
 
 function stacked(below: RenderElement, section: RenderElement): RenderElement {
