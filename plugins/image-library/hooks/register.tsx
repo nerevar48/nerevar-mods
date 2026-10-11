@@ -244,17 +244,17 @@ function ensurePreview($: EngineInterface, cacheDir: string, image: LibraryImage
   const run = (async () => {
     if (!THUMBABLE.includes(extensionOf(image.path))) return
     const known = (await read($, previews))[key]
-    // null — формат не читается; готовый просмотр без полос на диске делается заново.
-    if (known === null || (known && (await hasStrips($, known)))) return
+    // null — формат не читается; готовый просмотр без полос на диске и сбой делаются заново.
+    if (known === null || (known && 'strips' in known && (await hasStrips($, known)))) return
 
     const args = ['-Mode', 'preview', '-CacheDir', cacheDir, '-Size', String(PREVIEW_WIDTH), '-StripBytes', String(STRIP_BYTES)]
     try {
       const made = parseJson<Preview | null>(await runScript($, args, image.path), null)
       await update($, previews, current => ({ ...current, [key]: made }))
     } catch (failure) {
-      // Сбой запуска не помечает картинку непросматриваемой: следующее открытие попробует снова.
-      await update($, previews, current => Object.fromEntries(Object.entries(current).filter(([one]) => one !== key)))
-      $.ui.toast(`Просмотр не подготовлен: ${failure instanceof Error ? failure.message : String(failure)}`)
+      // Сбой не помечает картинку непросматриваемой: просмотр показывает его с кнопкой «Повторить».
+      const message = failure instanceof Error ? failure.message : String(failure)
+      await update($, previews, current => ({ ...current, [key]: { error: message } }))
     }
   })().finally(() => previewRuns.delete(key))
 
@@ -354,10 +354,20 @@ async function pictureOf(
 // Тело просмотра: полосы, мелкий исходник целиком или подсказка.
 async function viewerPicture(
   $: EngineInterface,
-  { Box, Svg, Text }: Pick<Elements['desktop'], 'Box' | 'Svg' | 'Text'>,
+  { Box, Button, Svg, Text }: Pick<Elements['desktop'], 'Box' | 'Button' | 'Svg' | 'Text'>,
   image: LibraryImage,
-  preview: Preview | null | undefined,
+  preview: Preview | null | { error: string } | undefined,
+  retry: () => Promise<void>,
 ): Promise<RenderElement> {
+  if (preview && 'error' in preview) {
+    return (
+      <Box key="viewer-error" flexDirection="row" alignItems="center" gap={1}>
+        <Text color="red">Не удалось подготовить просмотр: {preview.error}</Text>
+        <Button key="viewer:retry" label="Повторить" onPress={retry} />
+      </Box>
+    )
+  }
+
   if (preview) {
     // Полосы по ~100 КБ не кэшируются: просмотр рисуется редко, а память нужнее миниатюрам.
     const strips = await Promise.all(
@@ -500,7 +510,8 @@ export const register: Register = (on, options) => {
       const inChosen = chosen.findIndex(image => image.path === viewed.path)
       const list = inChosen >= 0 ? chosen : [viewed]
       const position = Math.max(0, inChosen)
-      const picture = await viewerPicture($, ui, viewed, (await read($, previews))[thumbKey(viewed)])
+      const preview = (await read($, previews))[thumbKey(viewed)]
+      const picture = await viewerPicture($, ui, viewed, preview, () => ensurePreview($, cacheDir, viewed))
 
       return (
         <Box flexDirection="column" gap={1}>

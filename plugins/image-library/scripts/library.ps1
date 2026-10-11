@@ -24,7 +24,8 @@ try {
   [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
   [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 } catch {}
-$inputText = [Console]::In.ReadToEnd()
+# BOM в начале ввода (его добавляет запуск из консоли с UTF-8) ConvertFrom-Json не принимает.
+$inputText = [Console]::In.ReadToEnd().TrimStart([char] 0xFEFF)
 $request = if ($inputText.Trim()) { ConvertFrom-Json $inputText } else { @() }
 
 if ($Mode -eq 'copy') {
@@ -108,7 +109,11 @@ function Get-JpegBytes([Drawing.Image] $image, [long] $quality) {
 function Write-Atomic([string] $path, [scriptblock] $write) {
   $temp = "$path.$PID.tmp"
   & $write $temp
-  try { [IO.File]::Move($temp, $path) } catch { [IO.File]::Delete($temp) }
+  try { [IO.File]::Move($temp, $path) } catch {
+    [IO.File]::Delete($temp)
+    # Файл уже записал параллельный запуск — это не сбой; иначе (место, права) — сбой.
+    if (-not [IO.File]::Exists($path)) { throw }
+  }
 }
 
 # Копия картинки, вписанная в $maxWidth × $maxHeight (не больше исходника), на белом фоне.
@@ -160,13 +165,17 @@ try {
   # Манифест годится, пока на диске все его полосы.
   if ([IO.File]::Exists($manifest)) {
     $cached = [IO.File]::ReadAllText($manifest)
-    $isWhole = @((ConvertFrom-Json $cached).strips | Where-Object { -not [IO.File]::Exists($_.path) }).Count -eq 0
+    # Испорченный манифест считается негодным и делается заново.
+    $isWhole = try { @((ConvertFrom-Json $cached).strips | Where-Object { -not [IO.File]::Exists($_.path) }).Count -eq 0 } catch { $false }
     if ($isWhole) {
       $cached
       exit 0
     }
   }
 
+  # Занятый или пропавший файл — сбой (IOException отсюда), следующая попытка повторит:
+  # System.Drawing сообщил бы о нём так же, как о нечитаемом формате.
+  [IO.File]::Open($info.FullName, 'Open', 'Read', 'ReadWrite').Dispose()
   try { $image = [Drawing.Image]::FromFile($info.FullName) } catch {
     # Формат, который System.Drawing не читает: просмотра нет, это не сбой.
     'null'

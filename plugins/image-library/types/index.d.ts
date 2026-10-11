@@ -33,8 +33,8 @@ declare module 'claude-code' {
       thumbs: Record<string, string | null>
       // Путь картинки, открытой в просмотре; null — показана галерея.
       viewing: string | null
-      // «путь|mtime» → полосы просмотра; null — просмотр не сделать.
-      previews: Record<string, Preview | null>
+      // «путь|mtime» → полосы просмотра; null — формат не читается; { error } — сбой подготовки.
+      previews: Record<string, Preview | null | { error: string }>
     }
   }
 }

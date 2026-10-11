@@ -318,16 +318,15 @@ describe('image-library', () => {
     expect(await openKeys(ui)).toHaveLength(3)
   })
 
-  test('a failed preview run is retried on the next open, not marked unviewable', async ($, on) => {
+  test('a failed preview run shows the error with a retry, not a lasting «Готовлю просмотр…»', async ($, on) => {
     const w = engine(on, { previewError: 'нет памяти' })
     await openLibrary($)
     const ui = await pane($, 'desktop')
     await ui.press({ key: `view:${IMAGES[0]!.path}` })
-    expect(w.toasts).toEqual(['Просмотр не подготовлен: нет памяти'])
-    await ui.press({ key: 'viewer:back' })
+    expect(await ui.find({ type: 'Text', text: /Не удалось подготовить просмотр: нет памяти/ })).toBeDefined()
 
     w.previewError = ''
-    await ui.press({ key: `view:${IMAGES[0]!.path}` })
+    await ui.press({ key: 'viewer:retry' })
     expect(w.previewRequests).toEqual([IMAGES[0]!.path, IMAGES[0]!.path])
     expect(await ui.findAll({ type: 'Svg' })).toHaveLength(2)
   })
