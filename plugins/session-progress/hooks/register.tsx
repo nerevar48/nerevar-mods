@@ -19,7 +19,7 @@ const RULE =
 
 // Prompts that report on work rather than ask for it. A denylist: the desktop's
 // own prompts may arrive unstamped, and an engine without origins stamps none.
-const REPORTS = new Set(['task-notification', 'peer-send-message', 'observer', 'observer-activity'])
+const REPORTS = new Set<PromptOrigin['kind']>(['task-notification', 'peer-send-message', 'observer', 'observer-activity'])
 
 const asksForWork = (origin: PromptOrigin | undefined): boolean =>
   !origin || (origin.kind === 'plugin' ? origin.asUser === true : !REPORTS.has(origin.kind))
