@@ -3,13 +3,9 @@ import type { EngineInterface, Register, RenderSurface, UiPressArgument } from '
 // Ссылка, которой Claude Code Desktop открывает свою сессию по её id.
 const LINK_PREFIX = 'claude://claude.ai/epitaxy/'
 
-// Системные утилиты буфера обмена: $.ui.copy на удалённой поверхности (desktop) не пишет.
-const CLIPBOARD_COMMANDS: readonly (readonly string[])[] = [
-  ['clip.exe'],
-  ['pbcopy'],
-  ['wl-copy'],
-  ['xclip', '-selection', 'clipboard'],
-]
+// Буфер обмена машины, где запущен Desktop (Windows или macOS): $.ui.copy на
+// удалённой поверхности (desktop) в буфер не пишет.
+const CLIPBOARD_COMMANDS: readonly (readonly string[])[] = [['clip.exe'], ['pbcopy']]
 
 async function copyWithSystemTool($: EngineInterface, text: string): Promise<boolean> {
   for (const argv of CLIPBOARD_COMMANDS) {
@@ -28,9 +24,11 @@ async function copyWithSystemTool($: EngineInterface, text: string): Promise<boo
 }
 
 async function copyLink($: EngineInterface, link: string, surface: RenderSurface): Promise<void> {
-  const copied = await $.ui.copy({ text: link, surface })
+  const isCopied =
+    (await copyWithSystemTool($, link)) ||
+    (await $.ui.copy({ text: link, surface }).then(copied => copied.isCopied, () => false))
 
-  if (copied.isCopied || (await copyWithSystemTool($, link))) {
+  if (isCopied) {
     $.ui.toast('Ссылка на сессию скопирована')
   } else {
     $.ui.toast(`Не удалось скопировать: ${link}`)
