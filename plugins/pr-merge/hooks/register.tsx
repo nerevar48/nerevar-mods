@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderElement, RenderNode } from 'claude-code'
 
 import type { Checks, Pr } from '../types'
 
@@ -10,6 +10,26 @@ const PASSED_CONCLUSIONS = ['SUCCESS', 'NEUTRAL', 'SKIPPED']
 
 const pr = atom({ plugin: 'pr-merge', key: 'pr' } as const, null)
 const phase = atom({ plugin: 'pr-merge', key: 'phase' } as const, 'idle')
+
+// The band is shared, and the engine chains mods in no fixed order: each mod
+// files its section under a rank (time 10, PR 20, progress 30), the sections
+// beneath come up as one column, and the column is kept sorted by rank, the
+// rest (core's own drawing) last.
+const COLUMN = 'band-sections'
+const SECTION = 'band-section:'
+const RANK = 20
+
+function rankOf(node: RenderNode): number {
+  const key = typeof node === 'object' && node.type === 'Box' ? node.props?.key : undefined
+  const rank = typeof key === 'string' && key.startsWith(SECTION) ? Number(key.slice(SECTION.length)) : NaN
+  return Number.isFinite(rank) ? rank : Number.MAX_SAFE_INTEGER
+}
+
+function stacked(below: RenderElement, section: RenderElement): RenderElement {
+  const rest = below.type === 'Box' && below.props?.key === COLUMN ? (below.children ?? []) : [below]
+  const children = [section, ...rest].sort((a, b) => rankOf(a) - rankOf(b))
+  return { type: 'Box', props: { key: COLUMN, flexDirection: 'column' }, children }
+}
 
 type Check = { __typename?: string; status?: string; conclusion?: string; state?: string }
 
@@ -209,7 +229,6 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    // The band is shared: draw our rows above whatever the plugins beneath draw.
     const below = await next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const step = await read($, phase)
@@ -218,11 +237,9 @@ export const register: Register = (on, options) => {
     const pressed = () => undefined
 
     // The PR line gives way to the controls: it truncates, they keep their width.
-    return (
-      <Box flexDirection="column">
-        <Text dimColor wrap="truncate-end">
-          {'─'.repeat(e.props.bodyColumns)}
-        </Text>
+    return stacked(
+      below,
+      <Box key={`${SECTION}${RANK}`} flexDirection="column">
         <Box columnGap={1}>
           <Box flexShrink={1}>
             <Text wrap="truncate-end">
@@ -253,8 +270,7 @@ export const register: Register = (on, options) => {
             {step === 'idle' && <Button key="refresh" label="Обновить" onPress={pressed} />}
           </Box>
         </Box>
-        {below}
-      </Box>
+      </Box>,
     )
   })
 }

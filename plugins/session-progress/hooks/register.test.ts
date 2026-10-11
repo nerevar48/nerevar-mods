@@ -62,6 +62,20 @@ test("the band beneath (another plugin's) still shows under the bar", async ($, 
   }
 })
 
+test('the bar goes below the ranked sections of the mods beneath', async ($, on) => {
+  const section = (rank: number, text: string) => ({ type: 'Box', props: { key: `band-section:${rank}` }, children: [text] })
+  on('ui.render', { component: 'AbovePrompt' }, () =>
+    ({ type: 'Box', props: { key: 'band-sections', flexDirection: 'column' }, children: [
+      section(10, '⏱ 2с'), section(20, 'PR #40'), { type: 'engine', ref: 0 },
+    ] }) as RenderElement,
+  )
+  await $.tool.call({ tool: 'mcp__session-progress__progress', title: 'Fix login', steps: ['Read code', 'Patch'] })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const sections = (await ui.findAll({ type: 'Box' })).filter(b => String(b.props.key).startsWith('band-section:'))
+  expect(sections.map(b => b.text)).toEqual(['⏱ 2с', 'PR #40', expect.stringContaining('Fix login')])
+  await ui.unmount()
+})
+
 test('a todo list moves the bar and keeps the reported title', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'engine', ref: 0 }))
   on('tool.call', { tool: 'TodoWrite' }, () => ({ result: { oldTodos: [], newTodos: [] } }))

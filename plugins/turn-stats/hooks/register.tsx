@@ -1,12 +1,32 @@
 // Session statistics band: the desktop Code tab does not show a Stop hook's
 // systemMessage, so the session's totals are drawn above the prompt instead.
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, ModelUsage, Register, SessionRateLimit } from 'claude-code'
+import type { EngineInterface, ModelUsage, Register, RenderElement, RenderNode, SessionRateLimit } from 'claude-code'
 
 import type { SessionTotals, TokenUsage } from '../types'
 
 const totals = atom({ plugin: 'turn-stats', key: 'totals' } as const, null)
 const runningSince = atom({ plugin: 'turn-stats', key: 'runningSince' } as const, null)
+
+// The band is shared, and the engine chains mods in no fixed order: each mod
+// files its section under a rank (time 10, PR 20, progress 30), the sections
+// beneath come up as one column, and the column is kept sorted by rank, the
+// rest (core's own drawing) last.
+const COLUMN = 'band-sections'
+const SECTION = 'band-section:'
+const RANK = 10
+
+function rankOf(node: RenderNode): number {
+  const key = typeof node === 'object' && node.type === 'Box' ? node.props?.key : undefined
+  const rank = typeof key === 'string' && key.startsWith(SECTION) ? Number(key.slice(SECTION.length)) : NaN
+  return Number.isFinite(rank) ? rank : Number.MAX_SAFE_INTEGER
+}
+
+function stacked(below: RenderElement, section: RenderElement): RenderElement {
+  const rest = below.type === 'Box' && below.props?.key === COLUMN ? (below.children ?? []) : [below]
+  const children = [section, ...rest].sort((a, b) => rankOf(a) - rankOf(b))
+  return { type: 'Box', props: { key: COLUMN, flexDirection: 'column' }, children }
+}
 
 const STORE_PREFIX = 'session:'
 const MAX_STORED_SESSIONS = 200
@@ -190,7 +210,6 @@ export const register: Register = on => {
       return next(e)
     }
 
-    // The band is shared: draw our row above whatever the plugins beneath draw.
     const below = await next(e)
     const { Box, Text } = $.ui.resolve(e)
     const { rateLimits } = await $.session.usage()
@@ -227,8 +246,9 @@ export const register: Register = on => {
 
     const parts = segments.flatMap((segment, i) => (i === 0 ? segment : [{ text: SEPARATOR, isDim: true }, ...segment]))
 
-    return (
-      <Box flexDirection="column">
+    return stacked(
+      below,
+      <Box key={`${SECTION}${RANK}`} flexDirection="column">
         <Text wrap="truncate-end">
           {parts.map(part => (
             <Text color={part.color} dimColor={part.isDim} bold={part.isBold}>
@@ -236,8 +256,7 @@ export const register: Register = on => {
             </Text>
           ))}
         </Text>
-        {below}
-      </Box>
+      </Box>,
     )
   })
 }
