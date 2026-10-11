@@ -19,6 +19,7 @@ const REPLY = [
   '',
   '```md',
   '### Требуется решение',
+  '```js',
   '```',
   '',
   '### Требуется решение',
@@ -37,15 +38,19 @@ test('marked sections get a tab and a frame of their color', async ($, on) => {
     expect(await ui.find({ type: 'Markdown', text: /^Мод готов\.$/ })).toBeDefined()
     expect(await ui.find({ type: 'Markdown', text: /^1\. Цвет\?$/ })).toBeDefined()
     // The fenced heading stays inside the "Не сделано" section's text.
-    expect(await ui.find({ type: 'Markdown', text: /скриншот[\s\S]*```md\n### Требуется решение\n```/ })).toBeDefined()
+    expect(await ui.find({ type: 'Markdown', text: /скриншот[\s\S]*```md\n### Требуется решение\n```js\n```/ })).toBeDefined()
     await ui.unmount()
   }
 })
 
-test('a reply without marked sections is drawn by the engine', async ($, on) => {
+test('replies without marked sections, or with an empty one, are drawn by the engine', async ($, on) => {
   on('ui.render', { component: 'AssistantMessage' }, () => ({ type: 'engine', ref: 0 }))
-  const ui = await $.ui.mount({ ...message('## План\n- шаг'), surface: 'terminal' })
-  expect(await ui.find({ type: 'Markdown' })).toBeUndefined()
+  for (const text of ['## План\n- шаг', '## Summary\n- итог', 'просто текст', '### Сделано\n'])
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ ...message(text), surface })
+      expect(await ui.find({ type: 'Markdown' })).toBeUndefined()
+      await ui.unmount()
+    }
 })
 
 test('an English heading and a custom color', { options: { doneColor: 'green' } }, async ($, on) => {

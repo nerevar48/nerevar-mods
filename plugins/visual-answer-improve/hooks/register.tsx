@@ -8,7 +8,7 @@ type SectionKind = 'done' | 'notDone' | 'decision'
 type Titles = [label: string, ...aliases: string[]]
 
 const SECTIONS: Record<SectionKind, { ru: Titles; en: Titles; option: string }> = {
-  done: { ru: ['Сделано', 'Итог'], en: ['Done', 'Summary'], option: 'doneColor' },
+  done: { ru: ['Сделано'], en: ['Done'], option: 'doneColor' },
   notDone: { ru: ['Не сделано'], en: ['Not done'], option: 'notDoneColor' },
   decision: { ru: ['Требуется решение'], en: ['Decision needed'], option: 'decisionColor' },
 }
@@ -20,7 +20,7 @@ const RULE =
   "The user's interface draws three marked sections of a reply as colored frames. " +
   'When a turn ends with a report on the task, close the reply with these sections, in this order, ' +
   'each opened by its own level-3 heading written exactly as below, leaving out a section with nothing in it:\n' +
-  '- `### Сделано` (in an English reply `### Done`): what was actually done for this task.\n' +
+  '- `### Сделано` (in an English reply `### Done`): what was actually done for this task, with its links and statuses (PR, commit, checks).\n' +
   '- `### Не сделано` (`### Not done`): what was asked or planned and not done, and why.\n' +
   '- `### Требуется решение` (`### Decision needed`): the points the user has to decide, as a numbered list.\n' +
   'A reply that only asks the user to decide something carries the decision section alone. ' +
@@ -51,7 +51,7 @@ for (const [kind, s] of Object.entries(SECTIONS) as [SectionKind, (typeof SECTIO
 
 const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/
 const BOLD_LINE = /^ {0,3}(\*\*|__)(.+?)\1\s*:?\s*$/
-const FENCE = /^ {0,3}(`{3,}|~{3,})/
+const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
 
 // A marked section runs from its heading to the next heading at its level or
 // above, the next marked heading, or the end. Headings inside code fences are text.
@@ -65,15 +65,15 @@ function split(markdown: string): Segment[] {
 
   const flush = () => {
     const text = lines.join('\n').replace(/^\s*\n|\n\s*$/g, '')
-    if (text.trim() || kind !== 'text') out.push(kind === 'text' ? { kind, text } : { kind, label, text })
+    if (text.trim()) out.push(kind === 'text' ? { kind, text } : { kind, label, text })
     lines = []
   }
 
   for (const line of markdown.split('\n')) {
-    const marker = FENCE.exec(line)?.[1] ?? ''
+    const [, marker = '', info = ''] = FENCE.exec(line) ?? []
     if (fence || marker) {
       if (!fence) fence = marker
-      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = ''
+      else if (marker[0] === fence[0] && marker.length >= fence.length && !info.trim()) fence = ''
       lines.push(line)
       continue
     }
@@ -99,14 +99,14 @@ function split(markdown: string): Segment[] {
 // ---------------------------------------------------------------------------
 
 export const register: Register = (on, options) => {
-  const color = (kind: SectionKind) => String(options[SECTIONS[kind].option])
+  const color = (kind: SectionKind) => String(options[SECTIONS[kind].option] ?? '').trim() || undefined
 
   on('prompt.submit', ($, e, next) =>
     fromPerson(e.origin) ? next({ ...e, context: [...(e.context ?? []), RULE] }) : next(e),
   )
 
   on('ui.render', { component: 'AssistantMessage' }, ($, e, next) => {
-    if (e.props.isSummary) return next(e)
+    if (e.props.isSummary || !/^ {0,3}(#|\*\*|__)/m.test(e.props.text)) return next(e)
     const segments = split(e.props.text)
     if (!segments.some(s => s.kind !== 'text')) return next(e)
 
@@ -124,7 +124,7 @@ export const register: Register = (on, options) => {
                 </Text>
               </Box>
               <Box flexDirection="column" borderStyle="round" borderColor={c} paddingX={1}>
-                <Markdown text={s.text || ' '} />
+                <Markdown text={s.text} />
               </Box>
             </Box>
           )
