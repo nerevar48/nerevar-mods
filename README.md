@@ -35,9 +35,3 @@ Marketplace модов Claude Code.
   "visual-answer-improve@nerevar-mods": true
 }
 ```
-
-## Разработка
-
-Мод можно подключить из рабочей копии без установки: `CLAUDE_CODE_PLUGIN_DIRS=D:/Proj/nerevar-mods/plugins/<мод>`.
-Типы для редактора генерируются локально командой `/plugin-types` в `.claude-plugin/types/` (не коммитятся).
-При изменении мода поднимай `version` в его `plugin.json` и в `.claude-plugin/marketplace.json`.

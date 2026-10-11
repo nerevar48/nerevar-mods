@@ -3,3 +3,4 @@
 .claude/types/
 node_modules/
 .DS_Store
+claude.md
