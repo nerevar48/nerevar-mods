@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import type { RenderElement } from 'claude-code'
 
 const BAND = {
   plugin: 'session-progress',
@@ -47,7 +48,22 @@ test('the progress tool draws steps, advances current and finishes', async ($, o
   expect(await ui.find({ key: 'session-progress-dismiss' })).toBeUndefined()
 })
 
+test("the band beneath (another plugin's) still shows under the bar", async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return h(Text, {}, '⏱ 2с') as RenderElement
+  })
+  await $.tool.call({ tool: 'mcp__session-progress__progress', title: 'Fix login', steps: ['Read code', 'Patch'] })
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    await expectShown(ui, surface, /Fix login/)
+    expect(await ui.find({ type: 'Text', text: /⏱ 2с/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
 test('a todo list moves the bar and keeps the reported title', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'engine', ref: 0 }))
   on('tool.call', { tool: 'TodoWrite' }, () => ({ result: { oldTodos: [], newTodos: [] } }))
   await $.tool.call({ tool: 'mcp__session-progress__progress', title: 'Refactor' })
   await $.tool.call({
@@ -63,6 +79,7 @@ test('a todo list moves the bar and keeps the reported title', async ($, on) => 
 })
 
 test('tasks from TaskCreate and TaskUpdate count toward the bar', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'engine', ref: 0 }))
   let n = 0
   on('tool.call', { tool: 'TaskCreate' }, ($, e) => ({ result: { task: { id: String(++n), subject: String(e.subject) } } }))
   on('tool.call', { tool: 'TaskUpdate' }, ($, e) => ({ result: { success: true, taskId: String(e.taskId), updatedFields: ['status'] } }))

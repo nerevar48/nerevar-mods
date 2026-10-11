@@ -11,6 +11,7 @@ type World = {
   calls: string[]
   prompts: string[]
   toasts: string[]
+  below?: string
 }
 
 function world(overrides: Partial<World> = {}): World {
@@ -56,8 +57,8 @@ function engine(on: On, w: World) {
   on('turn.complete', ($, e) => ({ text: e.answer, usage: e.usage }))
   on('ui.invalidate', () => ({ value: undefined }))
   on('ui.render', ($, e) => {
-    const { Box } = $.ui.resolve(e)
-    return h(Box, { key: 'engine' }) as RenderElement
+    const { Box, Text } = $.ui.resolve(e)
+    return (w.below === undefined ? h(Box, { key: 'engine' }) : h(Text, {}, w.below)) as RenderElement
   })
 }
 
@@ -99,6 +100,14 @@ describe('pr-merge', () => {
       expect(texts.find(t => t.text === 'конфликт')?.props).toMatchObject({ color: 'red' })
       const labels = (await ui.findAll({ type: 'Button' })).map(b => b.props.label)
       expect(labels).toEqual(['Merge PR #40 (squash)', 'Обновить'])
+    })
+
+    test(`${surface}: the band beneath (another plugin's) still shows under the PR line`, async ($, on) => {
+      engine(on, world({ below: '⏱ 2с' }))
+      await $.session.start({ cwd: '.' })
+      const texts = (await (await band($, surface)).findAll({ type: 'Text' })).map(t => t.text)
+      expect(texts[1]).toBe('PR #40 Крафт → main · нет проверок')
+      expect(texts.at(-1)).toBe('⏱ 2с')
     })
 
     test(`${surface}: a clean PR merges, then main is switched to, fetched and pulled`, async ($, on) => {
