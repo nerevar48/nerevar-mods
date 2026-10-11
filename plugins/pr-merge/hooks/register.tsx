@@ -209,7 +209,8 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    // The band is shared: draw our rows above whatever the plugins beneath draw.
+    // The band is shared: draw our rows above whatever the plugins beneath draw,
+    // parted from them by a rule; core's own drawing ('engine') gets none.
     const below = await next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const step = await read($, phase)
@@ -220,9 +221,6 @@ export const register: Register = (on, options) => {
     // The PR line gives way to the controls: it truncates, they keep their width.
     return (
       <Box flexDirection="column">
-        <Text dimColor wrap="truncate-end">
-          {'─'.repeat(e.props.bodyColumns)}
-        </Text>
         <Box columnGap={1}>
           <Box flexShrink={1}>
             <Text wrap="truncate-end">
@@ -253,6 +251,11 @@ export const register: Register = (on, options) => {
             {step === 'idle' && <Button key="refresh" label="Обновить" onPress={pressed} />}
           </Box>
         </Box>
+        {below.type !== 'engine' && (
+          <Text dimColor wrap="truncate-end">
+            {'─'.repeat(e.props.bodyColumns)}
+          </Text>
+        )}
         {below}
       </Box>
     )

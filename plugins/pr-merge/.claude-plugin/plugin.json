@@ -1,6 +1,6 @@
 {
   "name": "pr-merge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": { "name": "nerevar48" },
   "description": "Band above the prompt with the current branch's GitHub PR and a Merge button (via gh)",
   "types": "./types/index.d.ts",

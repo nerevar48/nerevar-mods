@@ -34,10 +34,10 @@ function engine(on: On, world: World, store = new Map<string, unknown>()) {
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('turn.complete', ($, e) => ({ text: e.answer, usage: e.usage }))
   on('ui.invalidate', () => ({ value: undefined }))
-  // What the plugins beneath draw: an empty box, or a row of text (another band).
+  // What the plugins beneath draw: core's own drawing, or a row of text (another band).
   on('ui.render', ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
-    return (world.below === undefined ? h(Box, { key: 'engine' }) : h(Text, {}, world.below)) as RenderElement
+    const { Text } = $.ui.resolve(e)
+    return (world.below === undefined ? { type: 'engine', ref: 0 } : h(Text, {}, world.below)) as RenderElement
   })
   return clock
 }
@@ -146,7 +146,7 @@ describe('turn-stats', () => {
       engine(on, { limits: [], below: 'PR #40' })
       await turn($, 't1', 2_000)
       const text = await shown(await band($, surface))
-      expect(text).toBe('⏱ 2с (ход 2с) | PR #40')
+      expect(text).toBe(`⏱ 2с (ход 2с) | ${'─'.repeat(200)} | PR #40`)
     })
   }
 

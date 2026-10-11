@@ -58,7 +58,7 @@ function engine(on: On, w: World) {
   on('ui.invalidate', () => ({ value: undefined }))
   on('ui.render', ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    return (w.below === undefined ? h(Box, { key: 'engine' }) : h(Text, {}, w.below)) as RenderElement
+    return (w.below === undefined ? { type: 'engine', ref: 0 } : h(Text, {}, w.below)) as RenderElement
   })
 }
 
@@ -94,8 +94,8 @@ describe('pr-merge', () => {
       await $.session.start({ cwd: '.' })
       const ui = await band($, surface)
       const texts = await ui.findAll({ type: 'Text' })
-      expect(texts[0]?.text).toBe('─'.repeat(200))
-      expect(texts[1]?.text).toBe('PR #40 Крафт → main · нет проверок · конфликт')
+      expect(texts[0]?.text).toBe('PR #40 Крафт → main · нет проверок · конфликт')
+      expect(texts.some(t => t.text.startsWith('─'))).toBe(false)
       expect(texts.find(t => t.text === 'PR #40')?.props).toMatchObject({ color: 'magentaBright', bold: true })
       expect(texts.find(t => t.text === 'конфликт')?.props).toMatchObject({ color: 'red' })
       const labels = (await ui.findAll({ type: 'Button' })).map(b => b.props.label)
@@ -106,8 +106,8 @@ describe('pr-merge', () => {
       engine(on, world({ below: '⏱ 2с' }))
       await $.session.start({ cwd: '.' })
       const texts = (await (await band($, surface)).findAll({ type: 'Text' })).map(t => t.text)
-      expect(texts[1]).toBe('PR #40 Крафт → main · нет проверок')
-      expect(texts.at(-1)).toBe('⏱ 2с')
+      expect(texts[0]).toBe('PR #40 Крафт → main · нет проверок')
+      expect(texts.slice(-2)).toEqual(['─'.repeat(200), '⏱ 2с'])
     })
 
     test(`${surface}: a clean PR merges, then main is switched to, fetched and pulled`, async ($, on) => {

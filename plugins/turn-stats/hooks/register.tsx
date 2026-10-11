@@ -190,7 +190,8 @@ export const register: Register = on => {
       return next(e)
     }
 
-    // The band is shared: draw our row above whatever the plugins beneath draw.
+    // The band is shared: draw our row above whatever the plugins beneath draw,
+    // parted from them by a rule; core's own drawing ('engine') gets none.
     const below = await next(e)
     const { Box, Text } = $.ui.resolve(e)
     const { rateLimits } = await $.session.usage()
@@ -236,6 +237,11 @@ export const register: Register = on => {
             </Text>
           ))}
         </Text>
+        {below.type !== 'engine' && (
+          <Text dimColor wrap="truncate-end">
+            {'─'.repeat(e.props.bodyColumns)}
+          </Text>
+        )}
         {below}
       </Box>
     )

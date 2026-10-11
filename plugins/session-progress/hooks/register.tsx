@@ -362,10 +362,16 @@ export const register: Register = (on, options) => {
     const p = await read($, plan)
     if (p === null || e.props.hasSurvey) return next(e)
 
-    // The band is shared: draw our row above whatever the plugins beneath draw.
+    // The band is shared: draw our row above whatever the plugins beneath draw,
+    // parted from them by a rule; core's own drawing ('engine') gets none.
     const below = await next(e)
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
+    const rule = below.type !== 'engine' && (
+      <Text dimColor wrap="truncate-end">
+        {'─'.repeat(e.props.bodyColumns)}
+      </Text>
+    )
     const percent = `${Math.round(ratio(p) * 100)}%`
     const dismiss = <Button key="session-progress-dismiss" label="✕" plain role="dismiss" onPress={() => update($, plan, () => null)} />
 
@@ -380,6 +386,7 @@ export const register: Register = (on, options) => {
             <Svg source={rowSvg(p, width, e.props.isWorking)} alt={alt} width={width} height={H} />
             {dismiss}
           </Box>
+          {rule}
           {below}
         </Box>
       )
@@ -405,6 +412,7 @@ export const register: Register = (on, options) => {
           <Text dimColor>{percent}</Text>
           {dismiss}
         </Box>
+        {rule}
         {below}
       </Box>
     )
