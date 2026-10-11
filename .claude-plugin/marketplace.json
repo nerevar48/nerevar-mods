@@ -30,6 +30,13 @@
       "description": "Кнопка в футере поля ввода Claude Code Desktop, копирующая в буфер обмена ссылку на текущую сессию",
       "version": "0.1.0",
       "category": "mod"
+    },
+    {
+      "name": "visual-answer-improve",
+      "source": "./plugins/visual-answer-improve",
+      "description": "Рамки с вкладкой-меткой вокруг итоговых секций ответа: «Требуется решение» (оранжевая), «Сделано» (зелёная), «Не сделано» (мягкая красная)",
+      "version": "0.1.0",
+      "category": "mod"
     }
   ]
 }
